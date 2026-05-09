@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 
+
 def _config_root() -> Path:
     """User config dir — XDG on Linux, %APPDATA% on Windows."""
     if sys.platform == "win32":
@@ -82,9 +83,22 @@ class Library:
     auto_sync: bool = False  # trigger sync automatically on USB plug-in
     uuid: str = ""  # matches the .mixtape marker; "" for legacy / local libs
 
+    @property
+    def root(self) -> Path:
+        return Path(self.path).expanduser()
+
+    @property
+    def online(self) -> bool:
+        """Is the library directory currently accessible? (USB devices may
+        be unplugged.)"""
+        return self.root.is_dir()
+
 
 @dataclass
 class Playlist:
+    """A playlist's metadata. Lives on disk in
+    ``<library>/<relative_path>/.manifest.yaml`` — never in the central
+    config — so the device is fully self-describing."""
     name: str
     url: str
     format: str = "mp3"
@@ -92,10 +106,6 @@ class Playlist:
     relative_path: str = ""  # subdir under library root; defaults to slug(name)
     last_sync: str | None = None
     track_count: int = 0
-    # When True (default), syncs are blocked unless cookies are valid (=
-    # higher-tier audio guaranteed). Set False for casual / public-only
-    # playlists where you accept the public ~135 kbps tier and want to sync
-    # even if cookies expired.
     requires_cookies: bool = True
 
     def expanded_dir_for(self, library: Library) -> Path:
@@ -114,33 +124,50 @@ class Defaults:
 
 @dataclass
 class Config:
+    """Central config = cookies, libraries, defaults. Playlists themselves
+    live on disk in each library — see ``playlists_for(library)``."""
     defaults: Defaults = field(default_factory=Defaults)
     active_library: str = "PC"
     libraries: list[Library] = field(default_factory=list)
-    playlists: list[Playlist] = field(default_factory=list)
 
     @classmethod
     def load(cls) -> "Config":
         if not CONFIG_FILE.exists():
+            pc_path = Path.home() / "Music/mixtape"
+            pc_path.mkdir(parents=True, exist_ok=True)
+            pc_uuid = _ensure_local_marker(pc_path, "PC")
             cfg = cls(
-                libraries=[Library(name="PC", path=str(Path.home() / "Music/YTMusic"))],
+                libraries=[Library(name="PC", path=str(pc_path), uuid=pc_uuid)],
             )
             cfg.save()
             return cfg
         with CONFIG_FILE.open() as f:
             data = yaml.safe_load(f) or {}
 
-        # Detect & migrate legacy schema (v1 → v2: introduce libraries)
+        # Detect & migrate legacy schemas
+        # v1 → v2: introduce libraries (defaults.output_root → libraries[])
+        # v2 → v3: drop config.playlists[] (move them to per-library manifests on disk)
+        # v3+:    every library should also carry a .mixtape marker (uuid)
+        needed_migration = False
         if "libraries" not in data:
             data = _migrate_v1_to_v2(data)
+            needed_migration = True
+        if data.get("playlists"):  # v2 → v3
+            _snapshot_playlists_to_disk(data)
+            data.pop("playlists", None)
+            needed_migration = True
 
         defaults = Defaults(**(data.get("defaults") or {}))
         libraries = [Library(**lib) for lib in (data.get("libraries") or [])]
-        playlists = [Playlist(**_filter_known_fields(p, Playlist)) for p in (data.get("playlists") or [])]
+        # Backfill missing UUIDs by writing a .mixtape marker into each
+        # online library — same identity model for PC and USB.
+        for lib in libraries:
+            if not lib.uuid and lib.online:
+                lib.uuid = _ensure_local_marker(lib.root, lib.name)
+                needed_migration = True
         active = data.get("active_library") or (libraries[0].name if libraries else "PC")
-        cfg = cls(defaults=defaults, active_library=active, libraries=libraries, playlists=playlists)
-        # Persist the migrated form so we don't run migration every load
-        if "libraries" not in (yaml.safe_load(CONFIG_FILE.read_text()) or {}):
+        cfg = cls(defaults=defaults, active_library=active, libraries=libraries)
+        if needed_migration:
             cfg.save()
         return cfg
 
@@ -152,7 +179,6 @@ class Config:
                     "defaults": asdict(self.defaults),
                     "active_library": self.active_library,
                     "libraries": [asdict(lib) for lib in self.libraries],
-                    "playlists": [asdict(p) for p in self.playlists],
                 },
                 f, sort_keys=False, allow_unicode=True,
             )
@@ -163,10 +189,9 @@ class Config:
         for lib in self.libraries:
             if lib.name == self.active_library:
                 return lib
-        # Fallback: first library or a synthesized default
         if self.libraries:
             return self.libraries[0]
-        return Library(name="PC", path=str(Path.home() / "Music/YTMusic"))
+        return Library(name="PC", path=str(Path.home() / "Music/mixtape"))
 
     def set_active_library(self, name: str) -> None:
         if any(lib.name == name for lib in self.libraries):
@@ -181,8 +206,9 @@ class Config:
 
     def remove_library(self, name: str) -> None:
         if name == self.active_library and len(self.libraries) > 1:
-            # switch active to the first remaining one
-            self.active_library = next((lib.name for lib in self.libraries if lib.name != name), name)
+            self.active_library = next(
+                (lib.name for lib in self.libraries if lib.name != name), name,
+            )
         self.libraries = [lib for lib in self.libraries if lib.name != name]
         self.save()
 
@@ -194,40 +220,105 @@ class Config:
             return None
         return next((lib for lib in self.libraries if lib.uuid == uid), None)
 
-    # --- playlist helpers ---
+    # --- playlists (read-through to disk) ---
+
+    def playlists_for(self, library: Library) -> list[Playlist]:
+        """Discover playlists from the library's on-disk manifests. Source of
+        truth — no caching here so changes show up immediately."""
+        if not library.online:
+            return []
+        # Local import to avoid the config <-> manifest <-> downloader cycle
+        from .manifest import Manifest
+        out: list[Playlist] = []
+        for sub in sorted(p for p in library.root.iterdir() if p.is_dir()):
+            mp = sub / ".manifest.yaml"
+            if not mp.is_file():
+                continue
+            m = Manifest.load(mp)
+            if not m.url:
+                continue
+            out.append(Playlist(
+                name=m.name or sub.name,
+                url=m.url,
+                format=m.format or self.defaults.format,
+                quality=m.quality or self.defaults.quality,
+                relative_path=sub.name,
+                last_sync=m.last_sync or None,
+                track_count=len(m.tracks),
+                requires_cookies=m.requires_cookies,
+            ))
+        return out
+
+    def active_playlists(self) -> list[Playlist]:
+        return self.playlists_for(self.active_library_obj())
+
+    # --- playlist mutations (write to disk) ---
 
     def add_playlist(self, p: Playlist) -> None:
-        self.playlists.append(p)
-        self.save()
+        """Create a playlist on the active library (writes its .manifest.yaml)."""
+        self._write_playlist(self.active_library_obj(), p)
 
-    def remove_playlist(self, index: int) -> None:
-        del self.playlists[index]
-        self.save()
+    def update_playlist(self, p: Playlist) -> None:
+        """Update by relative_path (the on-disk identity)."""
+        self._write_playlist(self.active_library_obj(), p)
 
-    def update_playlist(self, index: int, p: Playlist) -> None:
-        self.playlists[index] = p
-        self.save()
+    def remove_playlist(self, p: Playlist, *, also_files: bool = False) -> None:
+        import shutil
+        lib = self.active_library_obj()
+        d = p.expanded_dir_for(lib)
+        if not d.is_dir():
+            return
+        if also_files:
+            shutil.rmtree(d, ignore_errors=True)
+        else:
+            # Just remove the playlist's identity, keep audio files alone
+            for fname in (".manifest.yaml", ".archive"):
+                (d / fname).unlink(missing_ok=True)
 
-    def mark_synced(self, index: int, track_count: int) -> None:
-        self.playlists[index].last_sync = datetime.now().isoformat(timespec="seconds")
-        self.playlists[index].track_count = track_count
-        self.save()
+    def mark_synced(self, p: Playlist, track_count: int) -> None:
+        """Update the playlist's last_sync + track_count on disk."""
+        lib = self.active_library_obj()
+        from .manifest import Manifest
+        mp = p.expanded_dir_for(lib) / ".manifest.yaml"
+        m = Manifest.load(mp) if mp.exists() else Manifest()
+        m.url = p.url; m.name = p.name
+        m.format = p.format; m.quality = p.quality
+        m.requires_cookies = p.requires_cookies
+        m.last_sync = datetime.now().isoformat(timespec="seconds")
+        m.save(mp)
 
+    def _write_playlist(self, library: Library, p: Playlist) -> None:
+        from .manifest import Manifest
+        if not library.online:
+            raise RuntimeError(
+                f"Library {library.name!r} is offline ({library.path}) — "
+                "plug the device or switch active library before adding/editing."
+            )
+        d = p.expanded_dir_for(library)
+        d.mkdir(parents=True, exist_ok=True)
+        mp = d / ".manifest.yaml"
+        m = Manifest.load(mp) if mp.exists() else Manifest()
+        m.url = p.url
+        m.name = p.name
+        m.format = p.format
+        m.quality = p.quality
+        m.requires_cookies = p.requires_cookies
+        m.save(mp)
+
+
+# ── migrations ──────────────────────────────────────────────────────────────
 
 def _filter_known_fields(d: dict, cls) -> dict:
-    """Drop keys not present on the dataclass — for forward/backward compat."""
     known = {f.name for f in cls.__dataclass_fields__.values()}
     return {k: v for k, v in d.items() if k in known}
 
 
 def _migrate_v1_to_v2(data: dict) -> dict:
     """v1: defaults.output_root + playlists[].output_dir.
-    v2: libraries[] + playlists[].relative_path.
-    """
+    v2: libraries[] + playlists[].relative_path."""
     defaults = data.get("defaults") or {}
-    output_root = defaults.get("output_root") or str(Path.home() / "Music/YTMusic")
+    output_root = defaults.get("output_root") or str(Path.home() / "Music/mixtape")
     abs_root = Path(output_root).expanduser()
-
     libraries = [{"name": "PC", "path": str(abs_root), "volume_name": "", "auto_sync": False}]
     new_playlists = []
     for p in data.get("playlists") or []:
@@ -238,16 +329,68 @@ def _migrate_v1_to_v2(data: dict) -> dict:
                 rel = Path(old_dir).expanduser().relative_to(abs_root)
                 np["relative_path"] = str(rel)
             except ValueError:
-                # output_dir was outside the root — use slug(name) as fallback
                 pass
         new_playlists.append(np)
-
     return {
         "defaults": {"format": defaults.get("format", "mp3"), "quality": defaults.get("quality", "0")},
         "active_library": "PC",
         "libraries": libraries,
         "playlists": new_playlists,
     }
+
+
+def _snapshot_playlists_to_disk(data: dict) -> None:
+    """v2 → v3: persist each config-level playlist into the active library's
+    on-disk manifest, then drop ``playlists:`` from the config. Idempotent —
+    if a manifest already has a URL, we don't overwrite it."""
+    from .manifest import Manifest
+    libs = data.get("libraries") or []
+    active_name = data.get("active_library") or (libs[0]["name"] if libs else "PC")
+    active = next((lib for lib in libs if lib["name"] == active_name), libs[0] if libs else None)
+    if not active:
+        return
+    root = Path(active["path"]).expanduser()
+    if not root.is_dir():
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return  # active library offline at migration time — best effort
+    for p in data.get("playlists") or []:
+        rel = p.get("relative_path") or _slugify(p.get("name", "playlist"))
+        d = root / rel
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        mp = d / ".manifest.yaml"
+        m = Manifest.load(mp) if mp.exists() else Manifest()
+        if m.url:  # already has identity from a previous sync — leave it
+            continue
+        m.url = p.get("url", "")
+        m.name = p.get("name", "")
+        m.format = p.get("format", "mp3")
+        m.quality = p.get("quality", "0")
+        m.requires_cookies = bool(p.get("requires_cookies", True))
+        m.last_sync = p.get("last_sync") or None
+        try:
+            m.save(mp)
+        except OSError:
+            continue
+
+
+def _ensure_local_marker(root: Path, name: str) -> str:
+    """Write a .mixtape marker at ``root`` if absent and return its UUID.
+    Used to give every library — PC included — a stable cross-machine identity."""
+    from .library_marker import LibraryMarker, read_marker, write_marker
+    existing = read_marker(root)
+    if existing:
+        return existing.uuid
+    marker = LibraryMarker.new(name=name, auto_sync=False, mixtape_version="0.1.0b1")
+    try:
+        write_marker(root, marker)
+    except OSError:
+        pass
+    return marker.uuid
 
 
 def cookies_path() -> Path | None:

@@ -74,7 +74,8 @@ class PlaylistsScreen(Screen):
 
     def _refresh_status(self) -> None:
         bg = bgutil_server_path()
-        n = len(self.config.playlists)
+        playlists = self.config.active_playlists()
+        n = len(playlists)
         cookie_status = self.app.cookie_status  # type: ignore[attr-defined]
         if cookie_status.state == "valid":
             cookie_str = "[green]✓ cookies valid[/green]"
@@ -124,8 +125,7 @@ class PlaylistsScreen(Screen):
     def _refresh_table(self) -> None:
         table = self.query_one(DataTable)
         table.clear()
-        active_lib = self.config.active_library_obj()
-        for i, p in enumerate(self.config.playlists):
+        for i, p in enumerate(self.config.active_playlists()):
             last = p.last_sync or "—"
             tracks = str(p.track_count) if p.track_count else "—"
             folder = p.relative_path or _slugify(p.name)
@@ -163,12 +163,19 @@ class PlaylistsScreen(Screen):
         if idx is None:
             self.notify("Nothing selected.", severity="warning")
             return
-        existing = self.config.playlists[idx]
+        playlists = self.config.active_playlists()
+        if idx >= len(playlists):
+            return
+        existing = playlists[idx]
         screen = AddPlaylistScreen(self.config, prefilled_url=existing.url)
 
         def cb(result) -> None:
             if result is not None:
-                self.config.update_playlist(idx, result)
+                # Preserve the existing folder identity so the on-disk dir
+                # doesn't move around when the user just retyped the name.
+                if not result.relative_path and existing.relative_path:
+                    result.relative_path = existing.relative_path
+                self.config.update_playlist(result)
                 self._refresh_table()
                 self.notify(f"Updated '{result.name}'")
         self.app.push_screen(screen, cb)
@@ -178,8 +185,10 @@ class PlaylistsScreen(Screen):
         if idx is None:
             self.notify("Nothing selected.", severity="warning")
             return
-        playlist = self.config.playlists[idx]
-
+        playlists = self.config.active_playlists()
+        if idx >= len(playlists):
+            return
+        playlist = playlists[idx]
         active_lib = self.config.active_library_obj()
         playlist_dir = playlist.expanded_dir_for(active_lib)
 
@@ -187,18 +196,13 @@ class PlaylistsScreen(Screen):
             if result is None or not result.confirmed:
                 return
             name = playlist.name
-            if result.delete_folder:
-                if playlist_dir.exists():
-                    try:
-                        shutil.rmtree(playlist_dir)
-                        self.notify(f"Folder removed: {playlist_dir}")
-                    except OSError as e:
-                        self.notify(f"Could not remove folder: {e}", severity="error")
-                        return
-            self.config.remove_playlist(idx)
+            self.config.remove_playlist(playlist, also_files=bool(result.delete_folder))
             self._refresh_table()
             self._refresh_status()
-            self.notify(f"Deleted '{name}'")
+            if result.delete_folder:
+                self.notify(f"Deleted '{name}' (folder removed).")
+            else:
+                self.notify(f"Removed '{name}' from this library (audio files kept).")
 
         self.app.push_screen(ConfirmDeleteScreen(playlist.name, str(playlist_dir)), cb)
 
@@ -222,14 +226,18 @@ class PlaylistsScreen(Screen):
         if idx is None:
             self.notify("Nothing selected.", severity="warning")
             return
-        targets = [(idx, self.config.playlists[idx])]
+        playlists = self.config.active_playlists()
+        if idx >= len(playlists):
+            return
+        targets = [(idx, playlists[idx])]
         self._run_sync(targets)
 
     def action_sync_all(self) -> None:
-        if not self.config.playlists:
+        playlists = self.config.active_playlists()
+        if not playlists:
             self.notify("No playlists configured.", severity="warning")
             return
-        targets = [(i, p) for i, p in enumerate(self.config.playlists)]
+        targets = [(i, p) for i, p in enumerate(playlists)]
         self._run_sync(targets)
 
     def _run_sync(self, targets) -> None:

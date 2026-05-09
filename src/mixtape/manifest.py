@@ -33,6 +33,7 @@ class Manifest:
     format: str = ""
     quality: str = ""
     requires_cookies: bool = True
+    last_sync: str | None = None
 
     @classmethod
     def load(cls, path: Path) -> "Manifest":
@@ -48,6 +49,7 @@ class Manifest:
             format=str(data.get("format", "") or ""),
             quality=str(data.get("quality", "") or ""),
             requires_cookies=bool(data.get("requires_cookies", True)),
+            last_sync=data.get("last_sync") or None,
         )
 
     def save(self, path: Path) -> None:
@@ -58,6 +60,7 @@ class Manifest:
             "format": self.format,
             "quality": self.quality,
             "requires_cookies": self.requires_cookies,
+            "last_sync": self.last_sync,
             "tracks": {vid: asdict(t) for vid, t in self.tracks.items()},
         }
         path.write_text(yaml.safe_dump(out, sort_keys=False, allow_unicode=True))

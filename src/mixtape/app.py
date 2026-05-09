@@ -104,7 +104,8 @@ class MixtapeApp(App):
                     pass
         # Auto-sync if the library opted in and cookies are valid
         lib = self.config.get_library(library_name)
-        if lib and lib.auto_sync and self.cookie_status.ok and self.config.playlists:
+        playlists = self.config.active_playlists()
+        if lib and lib.auto_sync and self.cookie_status.ok and playlists:
             self.notify("Auto-syncing all playlists to this device…", severity="information")
             for s in self.screen_stack:
                 if isinstance(s, PlaylistsScreen):

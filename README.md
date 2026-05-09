@@ -6,10 +6,21 @@
 > Mixtapes for the streaming era — a TUI that mirrors curated YouTube Music
 > playlists onto USB MP3 players.
 
-Plug a registered device → it's auto-detected, recognised by its volume label,
+## Why this exists
+
+Younger and older folks alike spend their days glued to their phone — even
+to listen to music. **mixtape** exists to make music easy to enjoy *outside*
+the phone, so you can put the screen down and pick up something else: a
+small dedicated MP3 player handed to a kid for the car ride, an old
+Walkman-style device on the dock by the bed, a USB stick plugged into the
+hi-fi. Curate your playlists once, plug a device, walk away.
+
+## What it does
+
+Plug a registered device → it's auto-detected by its `.mixtape` marker,
 synced (with per-playlist audio format), the filesystem is flushed, and you
-get a "safe to unplug" notification. Designed to run **fully unattended** as a
-systemd service on a Raspberry Pi.
+get a "safe to unplug" notification. Designed to run **fully unattended** as
+a systemd service on a Raspberry Pi.
 
 Cross-platform (Linux · Windows). Python + Textual + yt-dlp + Deno.
 

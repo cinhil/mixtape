@@ -55,12 +55,13 @@ def run_headless() -> int:
     )
     cfg = Config.load()
     log.info("mixtape headless — platform=%s", platform_name())
+    initial_pls = cfg.active_playlists()
     log.info(
-        "loaded: %d libraries, %d playlists; active=%r",
-        len(cfg.libraries), len(cfg.playlists), cfg.active_library,
+        "loaded: %d libraries, %d playlists on active library %r",
+        len(cfg.libraries), len(initial_pls), cfg.active_library,
     )
-    if not cfg.playlists:
-        log.warning("no playlists configured — start the TUI once to add some")
+    if not initial_pls:
+        log.warning("no playlists in active library — start the TUI once to add some")
 
     # Cookies must be valid before we ever try a download.
     cs = get_cookie_status(force=True)
@@ -100,7 +101,8 @@ def run_headless() -> int:
                 continue
             log.info("  → registered as library %r", lib.name)
             cfg.set_active_library(lib.name)
-            if not (lib.auto_sync and cfg.playlists):
+            playlists = cfg.active_playlists()
+            if not (lib.auto_sync and playlists):
                 log.info("  → auto-sync disabled or no playlists — nothing to do")
                 continue
 
@@ -110,11 +112,11 @@ def run_headless() -> int:
             cookie_ok = fresh.ok
             if cookie_ok:
                 _clear_needs_cookies()
-                targets = list(cfg.playlists)
+                targets = list(playlists)
             else:
                 _set_needs_cookies(f"{fresh.state}: {fresh.message}")
-                targets = [p for p in cfg.playlists if not p.requires_cookies]
-                blocked = [p for p in cfg.playlists if p.requires_cookies]
+                targets = [p for p in playlists if not p.requires_cookies]
+                blocked = [p for p in playlists if p.requires_cookies]
                 if blocked:
                     log.warning(
                         "  → cookies %s — skipping %d playlist(s) that require auth: %s",
@@ -163,13 +165,10 @@ def _run_sync(cfg: Config, library: Library, targets: list[Playlist], lock: thre
     try:
         log.info("starting auto-sync of %d playlist(s) → %r (%s)",
                  len(targets), library.name, library.path)
-        for pl in targets:
+        for idx, pl in enumerate(targets):
             try:
-                # Use the playlist's index in the *config* list (so mark_synced
-                # writes to the right slot) — find it back from the object.
-                cfg_idx = next((i for i, p in enumerate(cfg.playlists) if p.url == pl.url), 0)
-                _sync_one(pl, library, cfg_idx)
-                cfg.mark_synced(cfg_idx, pl.track_count)
+                _sync_one(pl, library, idx)
+                cfg.mark_synced(pl, pl.track_count)
             except Exception as e:  # noqa: BLE001
                 log.error("playlist %r failed: %s", pl.name, e)
         try:

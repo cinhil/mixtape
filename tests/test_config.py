@@ -97,20 +97,63 @@ def test_migration_handles_missing_output_dir():
 # ── Config save/load round-trip via env override ─────────────────────────────
 
 def test_config_save_load_roundtrip(tmp_path, monkeypatch):
+    """Config carries cookies-config + libraries + defaults — playlists live
+    on disk in the active library and are derived from there."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
-    # Re-import config module so the env var is seen by its module-level paths
     import importlib
     import mixtape.config as cfg_mod
     importlib.reload(cfg_mod)
+
+    lib_path = tmp_path / "lib"
+    lib_path.mkdir()
     cfg = cfg_mod.Config(
         defaults=cfg_mod.Defaults(format="opus", quality="192"),
-        libraries=[cfg_mod.Library(name="L", path="/some/dir", uuid="abc")],
+        libraries=[cfg_mod.Library(name="L", path=str(lib_path), uuid="abc")],
         active_library="L",
-        playlists=[cfg_mod.Playlist(name="P", url="https://x", requires_cookies=False)],
     )
     cfg.save()
+    cfg.add_playlist(cfg_mod.Playlist(
+        name="P", url="https://x", format="m4a", quality="0", requires_cookies=False,
+    ))
+
     cfg2 = cfg_mod.Config.load()
     assert cfg2.active_library == "L"
     assert cfg2.libraries[0].uuid == "abc"
-    assert cfg2.playlists[0].requires_cookies is False
     assert cfg2.defaults.format == "opus"
+    pls = cfg2.active_playlists()
+    assert len(pls) == 1
+    assert pls[0].url == "https://x"
+    assert pls[0].requires_cookies is False
+    assert pls[0].format == "m4a"
+
+
+def test_v2_to_v3_migration_moves_playlists_to_disk(tmp_path, monkeypatch):
+    """A v2 config (with playlists in the YAML) is migrated to v3 by
+    snapshotting each playlist into the active library's manifest files."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    import importlib, yaml
+    import mixtape.config as cfg_mod
+    importlib.reload(cfg_mod)
+
+    lib_path = tmp_path / "lib"; lib_path.mkdir()
+    # Hand-craft a v2 config and write it to disk
+    cfg_mod.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    cfg_mod.CONFIG_FILE.write_text(yaml.safe_dump({
+        "defaults": {"format": "mp3", "quality": "0"},
+        "active_library": "L",
+        "libraries": [{"name": "L", "path": str(lib_path), "volume_name": "", "auto_sync": False}],
+        "playlists": [
+            {"name": "P1", "url": "https://x/1", "format": "mp3", "quality": "0", "relative_path": "P1"},
+            {"name": "P2", "url": "https://x/2", "format": "m4a", "quality": "192",
+             "relative_path": "P2", "requires_cookies": False},
+        ],
+    }))
+
+    cfg = cfg_mod.Config.load()
+    pls = cfg.active_playlists()
+    by_url = {p.url: p for p in pls}
+    assert set(by_url) == {"https://x/1", "https://x/2"}
+    assert by_url["https://x/2"].requires_cookies is False
+    # And the YAML no longer has the playlists section
+    yaml_after = yaml.safe_load(cfg_mod.CONFIG_FILE.read_text())
+    assert "playlists" not in yaml_after
