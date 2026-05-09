@@ -268,21 +268,35 @@ PATH automatically. If you're calling `deno` directly outside the launcher:
 $env:Path = "$env:USERPROFILE\.deno\bin;$env:Path"
 ```
 
-### Ctrl+C quits the TUI instead of copying
+### Ctrl+C — and even Ctrl+Shift+C — quits the TUI
 
-That's by design: in any Python/Textual TUI, `Ctrl+C` is the universal
-*interrupt* signal, not a copy shortcut. Use the standard Windows Terminal
-copy/paste shortcuts instead:
+`Ctrl+C` is the universal *interrupt* signal in any Python TUI: nothing
+unusual.
 
-- **Copy:** `Ctrl+Shift+C` (after selecting text)
-- **Paste:** `Ctrl+Shift+V` or right-click
-- **Select with the mouse inside a Textual area:** hold **Shift** while
-  dragging — this bypasses Textual's mouse capture and lets Windows
-  Terminal select natively.
+What surprises most users is that `Ctrl+Shift+C` *also* quits when there's
+no terminal-level selection. The reason is low-level: both shortcuts send
+the same byte (`0x03`) to the app — the `Shift` modifier doesn't add a
+distinct code in the TTY protocol. `Ctrl+Shift+C` only becomes "copy" when
+**Windows Terminal intercepts it first**, and it only intercepts when
+there's an actual text selection at the *terminal* level (the blue
+highlight). Clicking inside a Textual widget makes a selection internal to
+the app — Windows Terminal doesn't see it.
 
-For copying the sync log: in the sync screen, press **`y`** — that copies
-the current sync's log to the clipboard directly (no manual selection
-needed, emojis preserved via UTF-16 LE encoding).
+**The reliable copy/paste recipe in Windows Terminal:**
+
+1. **Hold `Shift` while dragging the mouse** over the text you want — this
+   bypasses Textual's mouse capture and produces a real terminal selection
+   (you'll see the blue highlight).
+2. **Then `Ctrl+Shift+C`** — now Windows Terminal has something to copy
+   and intercepts the keystroke before it reaches the app.
+3. Paste anywhere with `Ctrl+V` or `Ctrl+Shift+V`.
+
+**Easier shortcuts inside mixtape:**
+- In the sync screen: **`y`** copies the current sync's log straight to the
+  clipboard (via `clip.exe`, UTF-16 LE so emojis survive). No mouse
+  selection needed.
+- In the cookies screen: **`Ctrl+V`** pastes from the clipboard into the
+  textarea normally.
 
 ### Cookies stop working after a few weeks
 
