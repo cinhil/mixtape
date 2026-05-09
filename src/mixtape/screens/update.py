@@ -64,23 +64,25 @@ class UpdateScreen(ModalScreen[None]):
         self._busy = False
 
     def compose(self) -> ComposeResult:
-        status = get_update_status()
+        # We always do a fresh check on open (cache may be hours old or
+        # stale after a `git pull`); the summary starts as "checking" and
+        # gets replaced when on_mount's worker returns.
         with Vertical(id="dialog"):
             yield Label("[b]Mixtape update[/b]", id="title")
-            yield Static(self._render_summary(status), id="summary")
+            yield Static("[yellow]… checking for updates[/yellow]", id="summary")
             yield Static("", id="status")
             yield Static("", id="log")
             with Horizontal(id="buttons"):
-                # Always mount the apply button so re-check can show it later
-                # if a fresh update appears; just hide it when there's no
-                # update at open time.
-                apply_btn = Button(self._apply_label(status), id="apply", variant="primary")
-                if not status or not status.has_update:
-                    apply_btn.display = False
+                # Apply button starts hidden; the check result reveals it
+                # if there's something to apply.
+                apply_btn = Button(self._apply_label(None), id="apply", variant="primary")
+                apply_btn.display = False
                 yield apply_btn
-                yield Button("Re-check", id="recheck")
                 yield Button("Close (Esc)", id="close")
         yield Footer()
+
+    def on_mount(self) -> None:
+        self._do_recheck()
 
     def _apply_label(self, status: UpdateStatus | None) -> str:
         if status and status.channel == "stable":
@@ -100,8 +102,6 @@ class UpdateScreen(ModalScreen[None]):
         bid = event.button.id
         if bid == "close":
             self.dismiss(None)
-        elif bid == "recheck":
-            self._do_recheck()
         elif bid == "apply":
             self._do_apply()
 
@@ -116,15 +116,17 @@ class UpdateScreen(ModalScreen[None]):
         self.query_one("#log", Static).update(text or "")
 
     def _do_recheck(self) -> None:
+        # Force a fresh check (no cache) — the modal triggers this on open
+        # so the user always sees current state without an extra click.
         invalidate_cache()
-        self._set_status("[yellow]… re-checking[/yellow]")
+        self._set_status("")
 
         def worker() -> None:
             status = get_update_status(force=True)
             self.app.call_from_thread(self._after_recheck, status)
 
         self._busy = True
-        threading.Thread(target=worker, daemon=True, name="update-recheck").start()
+        threading.Thread(target=worker, daemon=True, name="update-check").start()
 
     def _after_recheck(self, status: UpdateStatus | None) -> None:
         self._busy = False
@@ -184,11 +186,29 @@ class UpdateScreen(ModalScreen[None]):
         self._set_log(output)
         if ok:
             self._set_status(
-                "[green]✓ updated — restart mixtape to use the new version.[/green]"
+                "[green]✓ updated — closing mixtape (and the tray if running) "
+                "so the new version takes effect…[/green]"
             )
             invalidate_cache()
+            # The running Python process still has the *old* modules in
+            # memory — the only way to actually pick up the new code is to
+            # restart. Stop the tray daemon first so it picks up the new
+            # code when the user relaunches; then exit.
+            self.set_timer(1.8, self._post_update_shutdown)
         else:
             self._set_status("[red]✗ git pull failed (see log below)[/red]")
+
+    def _post_update_shutdown(self) -> None:
+        from ..tray import kill_running_tray, tray_is_running
+        if tray_is_running():
+            try:
+                kill_running_tray()
+            except Exception:
+                pass
+        try:
+            self.app.exit()
+        except Exception:
+            pass
 
     def _apply_stable(self) -> None:
         platform = getattr(self.app, "platform", "")
