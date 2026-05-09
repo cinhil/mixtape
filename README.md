@@ -109,31 +109,19 @@ required). At app launch a local HTTP daemon is started on
 `127.0.0.1:4416`; yt-dlp discovers it automatically. The daemon is shut down
 cleanly when the app exits.
 
-## Config
+## Storage
 
-`~/.config/mixtape/config.yaml` — editable by hand. Sample structure:
+All state lives in standard XDG locations. You shouldn't need to touch any of
+these — the TUI manages everything.
 
-```yaml
-defaults:
-  format: mp3
-  quality: '0'           # "0" = best VBR; "192" / "256" / "320" = CBR
-active_library: PC
-libraries:
-  - name: PC
-    path: /home/you/Music/mixtape
-    volume_name: ""
-    auto_sync: false
-  - name: USB MP3 player
-    path: /media/you/MP3-player/music
-    volume_name: MP3-player
-    auto_sync: true
-playlists:
-  - name: Road trip 2026
-    url: https://music.youtube.com/playlist?list=…
-    format: m4a
-    quality: '0'
-    relative_path: Road trip 2026
-```
+| Path | Contents |
+|------|----------|
+| `~/.config/mixtape/config.yaml` | Libraries, playlists, defaults |
+| `~/.config/mixtape/cookies.txt` | YouTube cookies (chmod 600) |
+| `~/.local/share/mixtape/bgutil-server/` | Audio-resolution helper (set up by `setup-bgutil.sh`) |
+| `~/.local/state/mixtape/bgutil-server.log` | Daemon log |
+| `<library>/sync.log` | Per-library sync history |
+| `<library>/<playlist>/.archive` · `.manifest.yaml` | Per-playlist sync state |
 
 ## License
 
