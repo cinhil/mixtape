@@ -71,12 +71,21 @@ class UpdateScreen(ModalScreen[None]):
             yield Static("", id="status")
             yield Static("", id="log")
             with Horizontal(id="buttons"):
-                if status and status.has_update:
-                    label = "Pull latest commits" if status.channel == "dev" else "Copy install command"
-                    yield Button(label, id="apply", variant="primary")
+                # Always mount the apply button so re-check can show it later
+                # if a fresh update appears; just hide it when there's no
+                # update at open time.
+                apply_btn = Button(self._apply_label(status), id="apply", variant="primary")
+                if not status or not status.has_update:
+                    apply_btn.display = False
+                yield apply_btn
                 yield Button("Re-check", id="recheck")
                 yield Button("Close (Esc)", id="close")
         yield Footer()
+
+    def _apply_label(self, status: UpdateStatus | None) -> str:
+        if status and status.channel == "stable":
+            return "Copy install command"
+        return "Pull latest commits"
 
     def _render_summary(self, status: UpdateStatus | None) -> str:
         if status is None:
@@ -121,14 +130,11 @@ class UpdateScreen(ModalScreen[None]):
         self._busy = False
         self.query_one("#summary", Static).update(self._render_summary(status))
         self._set_status("")
-        # Refresh button visibility by rebuilding action area.
+        # Toggle the always-mounted apply button to match the new status.
         try:
             apply_btn = self.query_one("#apply", Button)
-            if not status or not status.has_update:
-                apply_btn.display = False
-            else:
-                apply_btn.display = True
-                apply_btn.label = "Pull latest commits" if status.channel == "dev" else "Copy install command"
+            apply_btn.label = self._apply_label(status)
+            apply_btn.display = bool(status and status.has_update)
         except Exception:
             pass
         # Also refresh the parent screen's banner.
