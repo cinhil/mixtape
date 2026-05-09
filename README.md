@@ -11,7 +11,7 @@ synced (with per-playlist audio format), the filesystem is flushed, and you
 get a "safe to unplug" notification. Designed to run **fully unattended** as a
 systemd service on a Raspberry Pi.
 
-Cross-platform (Linux · WSL · Windows). Python + Textual + yt-dlp + Deno.
+Cross-platform (Linux · Windows). Python + Textual + yt-dlp + Deno.
 
 ## Disclaimer
 
