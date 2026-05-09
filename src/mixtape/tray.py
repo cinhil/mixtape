@@ -382,20 +382,35 @@ class TrayApp:
 
 def spawn_detached() -> tuple[bool, str]:
     """Launch ``mixtape --tray`` as a detached subprocess and return
-    (ok, message). Used by the settings "Quit and switch to tray" button
-    and by the TUI's close-to-tray quit path.
+    (ok, message). Used by the settings "Tray running" toggle and by the
+    TUI's close-to-tray quit path.
 
-    The new process inherits no file handles or session from the caller,
-    so the parent can exit immediately afterwards without taking the tray
-    with it."""
+    The new process inherits no controlling terminal from the caller, so
+    the parent can exit immediately afterwards without taking the tray
+    with it. Tray stdout + stderr go to ``STATE_DIR/tray-spawn.log`` —
+    pystray init failures (missing display, OLE errors, etc.) would
+    otherwise vanish silently and just look like "the icon never appeared"
+    to the user."""
+    from .config import STATE_DIR
     exe = shutil.which("mixtape") or sys.executable
     if exe.endswith(("mixtape", "mixtape.exe")):
         cmd = [exe, "--tray"]
     else:
         cmd = [exe, "-m", "mixtape", "--tray"]
     try:
-        subprocess.Popen(cmd, start_new_session=True)
-        return True, "tray launched"
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = STATE_DIR / "tray-spawn.log"
+        log_fp = log_path.open("a", encoding="utf-8")
+        log_fp.write(f"\n--- spawn {os.getpid()} → {' '.join(cmd)} ---\n")
+        log_fp.flush()
+        subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fp,
+            stderr=log_fp,
+            start_new_session=True,
+        )
+        return True, f"tray launched (log: {log_path})"
     except OSError as e:
         return False, str(e)
 

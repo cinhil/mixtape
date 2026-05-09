@@ -128,14 +128,17 @@ class SettingsScreen(ModalScreen[None]):
         cb = event.checkbox
         if event.value:
             ok, msg = spawn_detached()
-            if ok:
-                # Give the new process a moment to write its pid file before
-                # we re-query state for the label.
-                self.set_timer(0.6, self._refresh_tray_label)
-                msg_status.update("[green]✓ tray launched.[/green]")
-            else:
+            if not ok:
                 msg_status.update(f"[red]✗ {msg}[/red]")
-                cb.value = False  # revert visual
+                cb.value = False
+                return
+            msg_status.update("[yellow]… launching tray (may take a few seconds on cold start)[/yellow]")
+            # Poll for the PID file rather than guessing a fixed delay —
+            # pystray's first launch on Windows can take several seconds
+            # (OLE init, icon resource load).
+            self._tray_wait_deadline = 5.0
+            self._tray_wait_elapsed = 0.0
+            self.set_timer(0.4, self._poll_tray_started)
         else:
             ok, msg = kill_running_tray()
             if ok:
@@ -143,9 +146,24 @@ class SettingsScreen(ModalScreen[None]):
                 msg_status.update(f"[green]✓ {msg}.[/green]")
             else:
                 msg_status.update(f"[yellow]{msg}[/yellow]")
-                # Re-query state in case the user clicked while it was already
-                # off — keep the visual aligned with reality.
                 self._refresh_tray_label()
+
+    def _poll_tray_started(self) -> None:
+        if tray_is_running():
+            self._refresh_tray_label()
+            self.query_one("#status", Static).update("[green]✓ tray running.[/green]")
+            return
+        self._tray_wait_elapsed += 0.4
+        if self._tray_wait_elapsed >= self._tray_wait_deadline:
+            self._refresh_tray_label()
+            from ..config import STATE_DIR
+            log_path = STATE_DIR / "tray-spawn.log"
+            self.query_one("#status", Static).update(
+                f"[red]✗ tray didn't come up within {self._tray_wait_deadline:.0f}s — "
+                f"check {log_path} for the error.[/red]"
+            )
+            return
+        self.set_timer(0.4, self._poll_tray_started)
 
     def _refresh_tray_label(self) -> None:
         try:
