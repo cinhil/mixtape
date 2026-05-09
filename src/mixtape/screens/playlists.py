@@ -38,7 +38,6 @@ class PlaylistsScreen(Screen):
         Binding("i", "import_lib", "Import"),
         Binding("l", "libraries", "Libraries"),
         Binding("o", "settings", "Settings"),
-        Binding("r", "refresh", "Refresh"),
         Binding("q", "quit_app", "Quit", priority=True),
         Binding("ctrl+c", "quit_app", "Quit", show=False, priority=True),
     ]
@@ -272,11 +271,6 @@ class PlaylistsScreen(Screen):
             except AttributeError:
                 pass
         self.app.push_screen(SyncScreen(self.config, targets), cb)
-
-    def action_refresh(self) -> None:
-        self.config = Config.load()
-        self._refresh_table()
-        self._refresh_status()
 
     def action_settings(self) -> None:
         self.app.push_screen(SettingsScreen())

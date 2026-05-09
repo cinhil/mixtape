@@ -279,7 +279,6 @@ What this enables:
 | `i` | Import all your YouTube playlists in one go (cookies required) |
 | `l` | Open the libraries screen |
 | `o` | Open settings (auto-start at login, launch tray) |
-| `r` | Reload `config.yaml` from disk |
 | `q` | Quit |
 
 ## System dependencies
