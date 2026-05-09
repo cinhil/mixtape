@@ -195,6 +195,7 @@ if (-not $NoShortcut) {
     $shortcutPath  = Join-Path ([Environment]::GetFolderPath('Desktop')) 'mixtape.lnk'
     $launcher      = Join-Path $InstallDir 'run.ps1'
     $iconCandidate = Join-Path $InstallDir 'mixtape.ico'
+    $venvPythonW   = Join-Path $InstallDir '.venv\Scripts\pythonw.exe'
 
     # Delete any existing shortcut first — Windows caches .lnk icons very
     # aggressively, so overwriting in place doesn't refresh the visible icon.
@@ -203,18 +204,29 @@ if (-not $NoShortcut) {
     }
 
     $shortcut = $WshShell.CreateShortcut($shortcutPath)
-    # Prefer PowerShell 7 (pwsh) when available, otherwise fall back to the
-    # built-in Windows PowerShell. Avoid `??` so Windows PowerShell 5.1 can
-    # parse this script too (the null-coalescing operator is PS 7+).
-    $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-    if ($pwsh) {
-        $shortcut.TargetPath = $pwsh.Source
+
+    if ($Desktop -and (Test-Path $venvPythonW)) {
+        # Qt desktop UI: launch pythonw.exe (no console window) directly
+        # at the venv-installed mixtape entrypoint with --desktop.
+        $shortcut.TargetPath = $venvPythonW
+        $shortcut.Arguments  = "-m mixtape --desktop"
+        $shortcut.WindowStyle = 1  # Normal (the Qt window draws itself)
+        $shortcut.Description = 'mixtape — desktop GUI (Qt)'
     } else {
-        $shortcut.TargetPath = (Get-Command powershell.exe).Source
+        # TUI: open a real terminal so the Textual app has somewhere to draw.
+        # Prefer PowerShell 7 (pwsh) when available, fall back to the
+        # built-in Windows PowerShell. (`??` is PS 7+, so avoid it.)
+        $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+        if ($pwsh) {
+            $shortcut.TargetPath = $pwsh.Source
+        } else {
+            $shortcut.TargetPath = (Get-Command powershell.exe).Source
+        }
+        $shortcut.Arguments    = "-NoExit -ExecutionPolicy Bypass -File `"$launcher`""
+        $shortcut.Description  = 'mixtape — TUI'
     }
-    $shortcut.Arguments        = "-NoExit -ExecutionPolicy Bypass -File `"$launcher`""
+
     $shortcut.WorkingDirectory = $InstallDir
-    $shortcut.Description      = 'mixtape — sync YT Music playlists to USB MP3 players'
     if (Test-Path $iconCandidate) { $shortcut.IconLocation = $iconCandidate }
     $shortcut.Save()
 
@@ -226,7 +238,11 @@ if (-not $NoShortcut) {
         $type = Add-Type -MemberDefinition $sig -Name 'Mixtape_SH' -Namespace Mx -PassThru -ErrorAction SilentlyContinue
         if ($type) { $type::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero) }
     } catch { }
-    OK "Desktop shortcut created: $shortcutPath"
+    if ($Desktop) {
+        OK "Desktop shortcut → Qt GUI: $shortcutPath"
+    } else {
+        OK "Desktop shortcut → TUI: $shortcutPath"
+    }
 } else {
     Step "Skipping desktop shortcut (-NoShortcut)"
 }
@@ -278,8 +294,11 @@ Write-Host "`n✓ All done." -ForegroundColor Green
 Write-Host "Project: $InstallDir"
 Write-Host ""
 Write-Host "Launch options:"
-Write-Host "  TUI (default):    double-click 'mixtape' on your desktop"
-Write-Host "  Daemon (manual):  & $pythonw -m mixtape.daemon.main"
 if ($Desktop) {
-    Write-Host "  Desktop GUI:      cd $InstallDir && uv run mixtape --desktop"
+    Write-Host "  Desktop GUI:      double-click 'mixtape' on your desktop"
+    Write-Host "  TUI:              cd $InstallDir; uv run mixtape"
+} else {
+    Write-Host "  TUI:              double-click 'mixtape' on your desktop"
+    Write-Host "  Desktop GUI:      re-run with -Desktop, then double-click 'mixtape'"
 }
+Write-Host "  Daemon (manual):  & $pythonw -m mixtape.daemon.main"
