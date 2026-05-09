@@ -248,21 +248,35 @@ class MixtapeApp(App):
 
 def main() -> None:
     import sys
-    if "--set-cookies" in sys.argv:
+    argv = sys.argv[1:]
+    if "--set-cookies" in argv:
         from .cli import set_cookies_from_stdin
         sys.exit(set_cookies_from_stdin())
-    if "--headless" in sys.argv or "-H" in sys.argv:
+    if "--headless" in argv or "-H" in argv:
         from .headless import run_headless
         sys.exit(run_headless())
-    if "--tray" in sys.argv or "-T" in sys.argv:
+    if "--daemon" in argv:
+        # Strip our own flag; pass the remainder to the daemon parser.
+        from .daemon.main import main as daemon_main
+        sys.exit(daemon_main([a for a in argv if a != "--daemon"]))
+    if "--tray" in argv or "-T" in argv:
         from .tray import run_tray
         sys.exit(run_tray())
-    app = MixtapeApp()
-    try:
-        app.run()
-    finally:
-        # Defensive: stop daemon even if Textual exits abnormally.
-        app.bgutil.stop()
+    if "--legacy-tui" in argv:
+        # Old in-process TUI (still works; doesn't talk to the daemon).
+        # Useful for migration-period debugging.
+        app = MixtapeApp()
+        try:
+            app.run()
+        finally:
+            app.bgutil.stop()
+        return
+    # Default: thin TUI talking to the daemon (auto-spawned if needed).
+    if "--desktop" in argv:
+        from .desktop.main import run_desktop  # type: ignore[import-not-found]
+        sys.exit(run_desktop())
+    from .tui import run_tui
+    sys.exit(run_tui())
 
 
 if __name__ == "__main__":
