@@ -173,6 +173,9 @@ def main() -> None:
     if "--headless" in sys.argv or "-H" in sys.argv:
         from .headless import run_headless
         sys.exit(run_headless())
+    if "--tray" in sys.argv or "-T" in sys.argv:
+        from .tray import run_tray
+        sys.exit(run_tray())
     app = MixtapeApp()
     try:
         app.run()

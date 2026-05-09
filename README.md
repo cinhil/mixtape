@@ -172,7 +172,31 @@ In the TUI:
 - `l` manage libraries (the PC default is created automatically; press `u` to register a USB device)
 - `s` sync the selected playlist · `S` sync all
 
+## Background mode — system tray
+
+For a "set and forget" experience on a desktop machine (Windows or Linux
+with a desktop environment), launch mixtape as a tray icon instead of a
+TUI:
+
+```bash
+mixtape --tray
+```
+
+The icon sits in the notification area; right-click for: *Open TUI* ·
+*Sync all now* · *Pause auto-sync* · *Show last sync log* · *Quit*. USB
+plug events still trigger an auto-sync without you doing anything.
+
+In the TUI press **`o`** (settings) to:
+- Toggle **Start mixtape at login** — drops a launcher in the OS startup
+  folder so the tray runs from boot. (Windows: a `.lnk` in the Startup
+  folder; Linux desktop: a `.desktop` in `~/.config/autostart/`.)
+- **Launch tray now** — start the tray immediately from the TUI.
+- **Quit and switch to tray** — close the TUI and continue in tray mode.
+
 ## Headless / Raspberry Pi
+
+For a server-style RPi without a desktop, use `--headless` instead of
+`--tray` (no GUI dependency):
 
 ```bash
 uv run mixtape --headless
@@ -254,6 +278,7 @@ What this enables:
 | `c` | Paste or update cookies |
 | `i` | Import all your YouTube playlists in one go (cookies required) |
 | `l` | Open the libraries screen |
+| `o` | Open settings (auto-start at login, launch tray) |
 | `r` | Reload `config.yaml` from disk |
 | `q` | Quit |
 

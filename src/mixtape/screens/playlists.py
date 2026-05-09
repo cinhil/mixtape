@@ -15,6 +15,7 @@ from .cookies import CookiesScreen
 from .import_library import ImportLibraryScreen
 from .libraries import LibrariesScreen
 from .quitting import QuittingScreen
+from .settings import SettingsScreen
 from .sync import SyncScreen
 
 
@@ -36,6 +37,7 @@ class PlaylistsScreen(Screen):
         Binding("c", "cookies", "Cookies"),
         Binding("i", "import_lib", "Import"),
         Binding("l", "libraries", "Libraries"),
+        Binding("o", "settings", "Settings"),
         Binding("r", "refresh", "Refresh"),
         Binding("q", "quit_app", "Quit", priority=True),
         Binding("ctrl+c", "quit_app", "Quit", show=False, priority=True),
@@ -275,6 +277,9 @@ class PlaylistsScreen(Screen):
         self.config = Config.load()
         self._refresh_table()
         self._refresh_status()
+
+    def action_settings(self) -> None:
+        self.app.push_screen(SettingsScreen())
 
     def action_libraries(self) -> None:
         def cb(_):
