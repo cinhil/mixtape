@@ -22,6 +22,8 @@
 [CmdletBinding()]
 param(
     [switch]$NoShortcut,
+    [switch]$NoAutostart,
+    [switch]$Desktop,    # install the optional PySide6 GUI
     [switch]$Dev,
     [string]$Ref
 )
@@ -168,8 +170,13 @@ if ($LASTEXITCODE -ne 0) {
     Warn "Run the command above directly to see the full error and report it if it persists."
     $LASTEXITCODE = 0
 }
-Step "uv sync …"
-$syncOut = Invoke-Native { & uv sync 2>&1 }
+if ($Desktop) {
+    Step "uv sync --extra desktop (PySide6 + qasync — heavyweight) …"
+    $syncOut = Invoke-Native { & uv sync --extra desktop 2>&1 }
+} else {
+    Step "uv sync …"
+    $syncOut = Invoke-Native { & uv sync 2>&1 }
+}
 if ($LASTEXITCODE -ne 0) {
     $syncOut | ForEach-Object { Write-Host $_ }
     Fail "uv sync failed (see output above)"
@@ -224,6 +231,55 @@ if (-not $NoShortcut) {
     Step "Skipping desktop shortcut (-NoShortcut)"
 }
 
+# 6. Daemon autostart at logon ------------------------------------------------
+Header "Step 6 — daemon autostart at logon"
+if (-not $NoAutostart) {
+    $startupDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
+    $startupLnk = Join-Path $startupDir 'mixtape-daemon.lnk'
+    New-Item -ItemType Directory -Force -Path $startupDir | Out-Null
+    if (Test-Path $startupLnk) {
+        try { Remove-Item -Force -Path $startupLnk } catch { }
+    }
+    $pythonw = Join-Path $InstallDir '.venv\Scripts\pythonw.exe'
+    if (-not (Test-Path $pythonw)) {
+        $pythonw = Join-Path $InstallDir '.venv\Scripts\python.exe'
+    }
+    $startupShortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($startupLnk)
+    $startupShortcut.TargetPath = $pythonw
+    $startupShortcut.Arguments = "-m mixtape.daemon.main"
+    $startupShortcut.WorkingDirectory = $InstallDir
+    $startupShortcut.Description = 'mixtape daemon — background sync engine'
+    $startupShortcut.WindowStyle = 7   # minimized; pythonw has no console anyway
+    if (Test-Path $iconCandidate) { $startupShortcut.IconLocation = $iconCandidate }
+    $startupShortcut.Save()
+    OK "daemon autostart at logon: $startupLnk"
+} else {
+    Step "Skipping daemon autostart (-NoAutostart)"
+}
+
+# 7. Restart any running daemon so it picks up the new code ------------------
+$running = Get-Process -Name pythonw, python -ErrorAction SilentlyContinue | Where-Object {
+    try { $_.CommandLine -match 'mixtape.daemon' } catch { $false }
+}
+if ($running) {
+    Step "Asking the running daemon to restart so it picks up the new code …"
+    $running | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+# Spawn one fresh daemon now so the user has a working install immediately.
+if (-not $NoAutostart) {
+    Step "Starting daemon …"
+    Start-Process -FilePath $pythonw -ArgumentList @("-m", "mixtape.daemon.main") `
+        -WorkingDirectory $InstallDir -WindowStyle Hidden | Out-Null
+    OK "daemon started"
+}
+
 Write-Host "`n✓ All done." -ForegroundColor Green
 Write-Host "Project: $InstallDir"
-Write-Host "Launch:  double-click 'mixtape' on your desktop  —  or run  $InstallDir\run.ps1"
+Write-Host ""
+Write-Host "Launch options:"
+Write-Host "  TUI (default):    double-click 'mixtape' on your desktop"
+Write-Host "  Daemon (manual):  & $pythonw -m mixtape.daemon.main"
+if ($Desktop) {
+    Write-Host "  Desktop GUI:      cd $InstallDir && uv run mixtape --desktop"
+}

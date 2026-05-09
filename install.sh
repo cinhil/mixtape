@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 #
-# mixtape — one-shot Linux / Raspberry Pi installer.
+# mixtape — one-shot Linux / macOS / Raspberry Pi installer.
 #
 # Run as a one-liner from any terminal (no clone needed):
 #
 #   curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash
 #
 # Flags:
-#   --systemd   also install a systemd --user service for unattended sync
-#   --dev       follow the 'main' branch (cutting edge) instead of the latest
-#               release tag (stable, the default)
-#   --ref=X     pin to a specific tag, branch, or commit
+#   --systemd     install a systemd --user service that runs the daemon at
+#                 boot (Linux only).
+#   --launchd     install a macOS LaunchAgent that runs the daemon at login.
+#   --desktop     also install the optional PySide6 GUI extras (large; only
+#                 useful on a desktop with a display).
+#   --dev         follow the 'main' branch instead of the latest release tag.
+#   --ref=X       pin to a specific tag, branch, or commit.
 #
 # Default behaviour: install / update to the latest GitHub Release. If no
 # release exists yet, falls back to 'main'.
 #
 # Override install location with: MIXTAPE_DIR=/some/path bash <(curl …)
-# Idempotent: safe to re-run (it pulls / checks out the target ref).
+# Idempotent: safe to re-run (it pulls / checks out the target ref). On
+# update, restarts the running daemon if the systemd unit is loaded.
 
 set -e
 
@@ -25,11 +29,15 @@ REPO_API="https://api.github.com/repos/cinhil/mixtape/releases/latest"
 DEFAULT_INSTALL="${MIXTAPE_DIR:-$HOME/.local/share/mixtape-app}"
 
 NEED_SYSTEMD=0
+NEED_LAUNCHD=0
+NEED_DESKTOP=0
 USE_DEV=0
 EXPLICIT_REF=""
 for arg in "$@"; do
     case "$arg" in
         --systemd) NEED_SYSTEMD=1 ;;
+        --launchd) NEED_LAUNCHD=1 ;;
+        --desktop) NEED_DESKTOP=1 ;;
         --dev)     USE_DEV=1 ;;
         --ref=*)   EXPLICIT_REF="${arg#*=}" ;;
         --help|-h)
@@ -37,6 +45,13 @@ for arg in "$@"; do
             exit 0 ;;
     esac
 done
+
+# Detect platform — drives apt-vs-brew + service-installer choice.
+case "$(uname -s)" in
+    Linux*)  PLATFORM="linux" ;;
+    Darwin*) PLATFORM="macos" ;;
+    *)       PLATFORM="unknown" ;;
+esac
 
 # Resolve which git ref to install / update to.
 #   --ref=foo       → that exact tag/branch/commit
@@ -77,24 +92,44 @@ else
     LOCAL_MODE=0
 fi
 
-# 1. apt prerequisites --------------------------------------------------------
+# 1. system packages ----------------------------------------------------------
 cyan ""
-cyan "=== Step 1/6 — system packages (apt) ==="
-if ! command -v sudo >/dev/null 2>&1; then
-    fail "sudo is required to install apt packages."
-fi
-need_apt=()
-for pkg in ffmpeg git curl ca-certificates; do
-    if dpkg -s "$pkg" >/dev/null 2>&1; then
-        ok "$pkg already installed"
-    else
-        need_apt+=("$pkg")
+cyan "=== Step 1/6 — system packages ==="
+if [ "$PLATFORM" = "linux" ]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+        fail "sudo is required to install apt packages."
     fi
-done
-if [ "${#need_apt[@]}" -gt 0 ]; then
-    step "sudo apt install -y ${need_apt[*]}"
-    sudo apt update
-    sudo apt install -y "${need_apt[@]}"
+    need_apt=()
+    for pkg in ffmpeg git curl ca-certificates; do
+        if dpkg -s "$pkg" >/dev/null 2>&1; then
+            ok "$pkg already installed"
+        else
+            need_apt+=("$pkg")
+        fi
+    done
+    if [ "${#need_apt[@]}" -gt 0 ]; then
+        step "sudo apt install -y ${need_apt[*]}"
+        sudo apt update
+        sudo apt install -y "${need_apt[@]}"
+    fi
+elif [ "$PLATFORM" = "macos" ]; then
+    if ! command -v brew >/dev/null 2>&1; then
+        fail "Homebrew is required on macOS. Install it from https://brew.sh"
+    fi
+    need_brew=()
+    for pkg in ffmpeg git; do
+        if brew list --formula "$pkg" >/dev/null 2>&1; then
+            ok "$pkg already installed"
+        else
+            need_brew+=("$pkg")
+        fi
+    done
+    if [ "${#need_brew[@]}" -gt 0 ]; then
+        step "brew install ${need_brew[*]}"
+        brew install "${need_brew[@]}"
+    fi
+else
+    fail "unsupported platform: $(uname -s)"
 fi
 
 # 2. Clone (or pull / checkout target ref) -----------------------------------
@@ -156,33 +191,90 @@ cyan "=== Step 5/6 — Python deps + bgutil companion ==="
 # has changed.
 step "Refreshing yt-dlp from upstream master …"
 uv lock --upgrade-package yt-dlp >/dev/null
-step "uv sync …"
-uv sync
+if [ "$NEED_DESKTOP" = "1" ]; then
+    step "uv sync --extra desktop (PySide6 + qasync — heavyweight) …"
+    uv sync --extra desktop
+else
+    step "uv sync …"
+    uv sync
+fi
 ok "Python deps up to date"
 step "Setting up / refreshing bgutil companion …"
 ./setup-bgutil.sh
 ok "bgutil companion ready"
 
-# 6. systemd unit (optional) --------------------------------------------------
+# 6. background service (optional) -------------------------------------------
 cyan ""
-cyan "=== Step 6/6 — systemd user service (optional) ==="
-if [ "$NEED_SYSTEMD" = "1" ]; then
+cyan "=== Step 6/6 — background service (optional) ==="
+if [ "$PLATFORM" = "linux" ] && [ "$NEED_SYSTEMD" = "1" ]; then
     target_dir="$HOME/.config/systemd/user"
     mkdir -p "$target_dir"
-    # rewrite WorkingDirectory in case the install path differs from the template default
     sed "s|^WorkingDirectory=.*|WorkingDirectory=$INSTALL_DIR|" mixtape.service \
         > "$target_dir/mixtape.service"
     systemctl --user daemon-reload
-    systemctl --user enable --now mixtape.service
-    ok "mixtape.service installed — see  journalctl --user -u mixtape -f"
+    if systemctl --user is-active --quiet mixtape.service; then
+        # Already running — restart so it picks up the new code.
+        systemctl --user restart mixtape.service
+        ok "mixtape.service restarted"
+    else
+        systemctl --user enable --now mixtape.service
+        ok "mixtape.service installed — see  journalctl --user -u mixtape -f"
+    fi
+elif [ "$PLATFORM" = "macos" ] && [ "$NEED_LAUNCHD" = "1" ]; then
+    plist="$HOME/Library/LaunchAgents/com.cinhil.mixtape.daemon.plist"
+    label="com.cinhil.mixtape.daemon"
+    log_path="$HOME/Library/Logs/mixtape-daemon.log"
+    mkdir -p "$(dirname "$plist")" "$(dirname "$log_path")"
+    daemon_exe="$INSTALL_DIR/.venv/bin/mixtape-daemon"
+    cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key><array><string>${daemon_exe}</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+  <key>WorkingDirectory</key><string>${INSTALL_DIR}</string>
+  <key>StandardOutPath</key><string>${log_path}</string>
+  <key>StandardErrorPath</key><string>${log_path}</string>
+</dict></plist>
+PLIST
+    # Modern verb (macOS 10.10+); fall back to legacy load -w.
+    uid="$(id -u)"
+    launchctl bootout "gui/${uid}/${label}" 2>/dev/null || true
+    launchctl bootstrap "gui/${uid}" "$plist" 2>/dev/null \
+        || launchctl load -w "$plist"
+    ok "LaunchAgent installed — see  tail -f $log_path"
 else
-    step "Skipping (pass --systemd to install the headless auto-sync service)"
+    step "Skipping background service install (pass --systemd on Linux or --launchd on macOS)"
+fi
+
+# 7. restart any running daemon so it picks up the new code -------------------
+if pgrep -f "mixtape.daemon.main\|mixtape-daemon" >/dev/null 2>&1; then
+    cyan ""
+    step "Asking the running daemon to restart so it picks up the new code …"
+    # We don't have a /restart endpoint — telling it to /shutdown is enough;
+    # systemd / launchd / the desktop UI's autostart will bring it back.
+    daemon_pids=$(pgrep -f "mixtape.daemon.main\|mixtape-daemon" || true)
+    for pid in $daemon_pids; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
 fi
 
 cyan ""
 cyan "✓ All done."
 echo "Project lives at: $INSTALL_DIR"
-echo "Launch the TUI:   cd $INSTALL_DIR && ./run.sh"
-if [ "$NEED_SYSTEMD" != "1" ]; then
-    echo "For unattended auto-sync (RPi etc.):  $0 --systemd"
+echo ""
+echo "Launch options:"
+echo "  TUI (default):    cd $INSTALL_DIR && ./run.sh"
+echo "  Daemon (manual):  cd $INSTALL_DIR && uv run mixtape-daemon"
+if [ "$NEED_DESKTOP" = "1" ]; then
+    echo "  Desktop GUI:      cd $INSTALL_DIR && uv run mixtape --desktop"
+fi
+echo ""
+if [ "$PLATFORM" = "linux" ] && [ "$NEED_SYSTEMD" != "1" ]; then
+    echo "Auto-start at boot:   $0 --systemd"
+fi
+if [ "$PLATFORM" = "macos" ] && [ "$NEED_LAUNCHD" != "1" ]; then
+    echo "Auto-start at login:  $0 --launchd"
 fi
