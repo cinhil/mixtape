@@ -4,8 +4,11 @@
 # Requirements:
 #   - git
 #   - deno (https://deno.land — installs npm deps itself, no Node needed)
+#
+# Compatibility: works on Windows PowerShell 5.1 and PowerShell 7+.
 
 $ErrorActionPreference = 'Stop'
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
 $DataDir   = if ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME 'mixtape' } else { Join-Path $env:LOCALAPPDATA 'mixtape' }
 $ServerDir = Join-Path $DataDir 'bgutil-server'

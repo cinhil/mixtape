@@ -15,6 +15,9 @@
 #
 # Override install location:  $env:MIXTAPE_DIR = "C:\path"; iex (irm …)
 # Idempotent: safe to re-run (it pulls / checks out the target ref).
+#
+# Compatibility: works on Windows PowerShell 5.1 (the default Windows ships)
+# AND PowerShell 7+. Avoid PS 7-only operators (??, ?., ?:, &&, ||).
 
 [CmdletBinding()]
 param(
@@ -24,6 +27,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Force TLS 1.2 for any Invoke-RestMethod / Invoke-WebRequest calls — needed
+# on a freshly-installed Windows PowerShell 5.1 whose default protocol is
+# still TLS 1.0/1.1, which GitHub now refuses. No-op on PS 7+.
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
 $RepoUrl = 'https://github.com/cinhil/mixtape.git'
 $RepoApi = 'https://api.github.com/repos/cinhil/mixtape/releases/latest'
