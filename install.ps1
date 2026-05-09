@@ -150,8 +150,15 @@ if (-not $NoShortcut) {
     $launcher      = Join-Path $InstallDir 'run.ps1'
     $iconCandidate = Join-Path $InstallDir 'mixtape.ico'
     $shortcut      = $WshShell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source `
-                            ?? (Get-Command powershell.exe).Source
+    # Prefer PowerShell 7 (pwsh) when available, otherwise fall back to the
+    # built-in Windows PowerShell. Avoid `??` so Windows PowerShell 5.1 can
+    # parse this script too (the null-coalescing operator is PS 7+).
+    $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if ($pwsh) {
+        $shortcut.TargetPath = $pwsh.Source
+    } else {
+        $shortcut.TargetPath = (Get-Command powershell.exe).Source
+    }
     $shortcut.Arguments        = "-NoExit -ExecutionPolicy Bypass -File `"$launcher`""
     $shortcut.WorkingDirectory = $InstallDir
     $shortcut.Description      = 'mixtape — sync YT Music playlists to USB MP3 players'
