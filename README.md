@@ -119,11 +119,40 @@ You can also pin to a specific version with `--ref=vX.Y.Z` (Linux) or
 See [docs/RELEASING.md](docs/RELEASING.md) for the maintainer-side release
 process (tagging, GitHub Actions, etc.).
 
-### Cookies (independent of code updates)
+### Cookies
 
 Cookies expire roughly every 30 days. The TUI shows `✗ cookies expired` in
 the status bar when that happens; press `c` to paste fresh ones from your
-browser.
+browser. Cookie status is refreshed at app start and after each sync.
+
+#### Headless / Raspberry Pi: how to refresh cookies remotely
+
+The headless service notices when cookies expire, logs a clear warning, and
+touches a marker file at:
+
+- Linux: `~/.local/state/mixtape/needs-cookies`
+- (the file's content is the reason, e.g. `expired: …`)
+
+To refresh from another machine, pipe the new cookies via SSH:
+
+```bash
+# On your laptop, after re-exporting cookies from the browser:
+ssh pi@rpi 'mixtape --set-cookies' < cookies.txt
+```
+
+The remote command:
+1. Validates the new cookies live (one quick API call)
+2. Writes them to `~/.config/mixtape/cookies.txt` (chmod 600)
+3. Removes the `needs-cookies` marker if validation succeeds
+
+The next USB plug-in event triggers a normal sync — no service restart
+needed (cookies are re-checked on every run).
+
+You can also monitor the headless logs directly:
+
+```bash
+journalctl --user -u mixtape -f
+```
 
 In the TUI:
 - `c` paste cookies (use a browser extension like *Get cookies.txt LOCALLY*)

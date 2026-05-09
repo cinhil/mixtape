@@ -143,6 +143,9 @@ class MixtapeApp(App):
 
 def main() -> None:
     import sys
+    if "--set-cookies" in sys.argv:
+        from .cli import set_cookies_from_stdin
+        sys.exit(set_cookies_from_stdin())
     if "--headless" in sys.argv or "-H" in sys.argv:
         from .headless import run_headless
         sys.exit(run_headless())

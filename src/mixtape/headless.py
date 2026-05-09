@@ -17,13 +17,34 @@ import threading
 import time
 
 from .bgutil_server import BgutilServer
-from .config import Config, Library, Playlist
-from .cookies_check import get_cookie_status
+from .config import Config, Library, Playlist, STATE_DIR
+from .cookies_check import get_cookie_status, invalidate_cache as invalidate_cookie_cache
 from .downloader import ProgressEvent, sync_playlist
 from .platform_io import VolumeChange, VolumeWatcher, flush_filesystem, platform_name
 
 
 log = logging.getLogger("mixtape")
+
+# Marker file the headless service touches when it discovers cookies are bad.
+# Useful for any external monitoring (a shell prompt, a script, …) and for
+# `mixtape --set-cookies` to know it can clear the alert.
+NEEDS_COOKIES_MARKER = STATE_DIR / "needs-cookies"
+
+
+def _set_needs_cookies(reason: str) -> None:
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        NEEDS_COOKIES_MARKER.write_text(reason + "\n")
+    except OSError:
+        pass
+
+
+def _clear_needs_cookies() -> None:
+    try:
+        if NEEDS_COOKIES_MARKER.exists():
+            NEEDS_COOKIES_MARKER.unlink()
+    except OSError:
+        pass
 
 
 def run_headless() -> int:
@@ -45,7 +66,13 @@ def run_headless() -> int:
     cs = get_cookie_status(force=True)
     log.info("cookie status: state=%s — %s", cs.state, cs.message)
     if not cs.ok:
-        log.warning("cookies invalid — auto-sync will be skipped until you re-paste them")
+        log.warning("cookies invalid (%s) — auto-sync will be skipped", cs.state)
+        log.warning(
+            "to fix from another machine:  ssh <host> 'mixtape --set-cookies' < cookies.txt"
+        )
+        _set_needs_cookies(f"{cs.state}: {cs.message}")
+    else:
+        _clear_needs_cookies()
 
     # Spin up the bgutil companion daemon (best effort — optional).
     bgutil = BgutilServer()
@@ -72,11 +99,18 @@ def run_headless() -> int:
                 log.info("  → not a registered library, ignoring")
                 continue
             log.info("  → registered as library %r", lib.name)
-            # Refresh cookies before syncing
+            # Refresh cookies before syncing — they expire ~monthly
+            invalidate_cookie_cache()
             fresh = get_cookie_status(force=True)
             if not fresh.ok:
-                log.warning("  → cookies %s (%s) — skipping sync", fresh.state, fresh.message)
+                log.warning(
+                    "  → cookies %s (%s) — skipping sync. "
+                    "Run on another machine:  ssh <host> 'mixtape --set-cookies' < cookies.txt",
+                    fresh.state, fresh.message,
+                )
+                _set_needs_cookies(f"{fresh.state}: {fresh.message}")
                 continue
+            _clear_needs_cookies()
             cfg.set_active_library(lib.name)
             if lib.auto_sync and cfg.playlists:
                 threading.Thread(
