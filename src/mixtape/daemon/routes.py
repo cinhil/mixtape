@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -43,7 +44,7 @@ def make_router(app: Application) -> APIRouter:
         cookies = app.cookies.status
         upd = app.updates.status
         return DaemonStatus(
-            pid=__import__("os").getpid(),
+            pid=os.getpid(),
             started_at=app.started_at or 0.0,
             bgutil={"state": app.bgutil.state, "message": app.bgutil.message},
             cookies={"state": cookies.state, "message": cookies.message},

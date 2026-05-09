@@ -43,6 +43,13 @@ class UpdateStatus:
 _cache: UpdateStatus | None = None
 
 
+def find_repo_dir() -> Path | None:
+    """Walk up from this module's path looking for a .git directory.
+    Returns ``None`` if mixtape isn't running from a git checkout
+    (e.g. installed as a wheel)."""
+    return _find_repo_dir()
+
+
 def _find_repo_dir() -> Path | None:
     """Walk up from this module's path looking for a .git directory.
     Works whether mixtape is installed editable (most common via uv sync) or

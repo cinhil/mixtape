@@ -58,6 +58,12 @@ def bgutil_server_path() -> Path | None:
     return None
 
 
+def slugify(name: str) -> str:
+    """Folder-safe name from a playlist title — strips emojis/punctuation
+    but keeps spaces. Public alias for the legacy ``_slugify``."""
+    return _slugify(name)
+
+
 def _slugify(name: str) -> str:
     """Folder-safe name from a playlist title — strips emojis/punctuation but
     keeps spaces (folders with spaces work fine on both Linux and NTFS)."""
@@ -387,6 +393,11 @@ def _snapshot_playlists_to_disk(data: dict) -> None:
             continue
 
 
+def ensure_local_marker(root: Path, name: str) -> str:
+    """Public alias for the historical ``_ensure_local_marker``."""
+    return _ensure_local_marker(root, name)
+
+
 def _ensure_local_marker(root: Path, name: str) -> str:
     """Write a .mixtape marker at ``root`` if absent and return its UUID.
     Used to give every library — PC included — a stable cross-machine identity."""
@@ -404,6 +415,19 @@ def _ensure_local_marker(root: Path, name: str) -> str:
 
 def cookies_path() -> Path | None:
     return COOKIES_FILE if COOKIES_FILE.exists() else None
+
+
+def validate_cookies_text(content: str) -> str:
+    """Raise ``ValueError`` if ``content`` doesn't look like a YouTube
+    Netscape ``cookies.txt``; return it normalised (trailing newline).
+
+    Single source of truth for the heuristic, used by the daemon's
+    /cookies endpoint and ``mixtape --set-cookies``."""
+    if not content.strip():
+        raise ValueError("empty cookies content")
+    if "youtube" not in content.lower() and not content.lstrip().startswith("# Netscape"):
+        raise ValueError("doesn't look like a YouTube cookies.txt — refusing")
+    return content if content.endswith("\n") else content + "\n"
 
 
 def write_cookies(content: str) -> None:

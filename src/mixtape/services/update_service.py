@@ -7,9 +7,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
-from pathlib import Path
 
-from ..update_check import UpdateStatus, get_update_status, invalidate_cache
+from ..update_check import (
+    UpdateStatus,
+    find_repo_dir,
+    get_update_status,
+    invalidate_cache,
+)
 from .events import EventBus
 
 
@@ -17,14 +21,6 @@ log = logging.getLogger("mixtape.update")
 
 
 PERIODIC_INTERVAL_S = 60 * 60  # 1 hour
-
-
-def _repo_dir() -> Path | None:
-    here = Path(__file__).resolve()
-    for ancestor in here.parents:
-        if (ancestor / ".git").exists():
-            return ancestor
-    return None
 
 
 class UpdateService:
@@ -54,8 +50,8 @@ class UpdateService:
         if force:
             await asyncio.to_thread(invalidate_cache)
         status = await asyncio.to_thread(get_update_status, force)
-        self._status = status
-        if status:
+        prev, self._status = self._status, status
+        if status is not None and self._is_change(prev, status):
             self._bus.publish(
                 "update.status",
                 channel=status.channel,
@@ -66,8 +62,16 @@ class UpdateService:
             )
         return status
 
+    @staticmethod
+    def _is_change(prev: UpdateStatus | None, new: UpdateStatus) -> bool:
+        if prev is None:
+            return True
+        return (prev.current, prev.latest, prev.behind, prev.message) != (
+            new.current, new.latest, new.behind, new.message
+        )
+
     async def apply_dev(self) -> tuple[bool, str]:
-        repo = _repo_dir()
+        repo = find_repo_dir()
         if not repo:
             return False, "no .git ancestor — can't pull"
         try:
@@ -81,8 +85,7 @@ class UpdateService:
             return False, str(e)
         if proc.returncode != 0:
             return False, (proc.stderr or proc.stdout or "git pull failed").strip()
-        invalidate_cache()
-        await self.refresh(force=True)
+        await self.refresh(force=True)  # also invalidates the cache
         return True, (proc.stdout or "updated").strip()
 
     async def _periodic(self) -> None:

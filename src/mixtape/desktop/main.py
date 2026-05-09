@@ -357,9 +357,11 @@ class DesktopController(QtCore.QObject):
 
     async def _refresh_state(self) -> None:
         try:
-            self._state = await self._client.status()
-            self._libs = await self._client.libraries()
-            self._playlists = await self._client.playlists()
+            self._state, self._libs, self._playlists = await asyncio.gather(
+                self._client.status(),
+                self._client.libraries(),
+                self._client.playlists(),
+            )
         except DaemonError as e:
             self._win.append_log(f'<span style="color:#e55">daemon error: {e}</span>')
             return
@@ -444,9 +446,15 @@ class DesktopController(QtCore.QObject):
             self._launch(self._refresh_state())
         elif name == "library.changed":
             self._launch(self._refresh_state())
-        elif name in ("cookies.status", "bgutil.status", "update.status"):
-            # Status text update — re-fetch /status next render cycle.
-            self._launch(self._refresh_state())
+        elif name == "cookies.status":
+            self._state["cookies"] = {"state": data.get("state"), "message": data.get("message")}
+            self._render_state()
+        elif name == "bgutil.status":
+            self._state["bgutil"] = {"state": data.get("state"), "message": data.get("message")}
+            self._render_state()
+        elif name == "update.status":
+            self._state["update"] = dict(data)
+            self._render_state()
         elif name == "volume.added":
             label = data.get("label") or data.get("identifier")
             self._tray.showMessage("mixtape", f"Volume plugged: {label}", _icon())
@@ -556,15 +564,9 @@ class DesktopController(QtCore.QObject):
             pass
 
     async def _shutdown_and_quit(self) -> None:
-        # Don't shut the daemon down on every quit — only when the user
-        # explicitly chooses Quit. The tray's Quit menu item is the
-        # only path that calls this.
-        try:
-            # Future hook: ask daemon to shut down too if a setting says so.
-            # For now, the daemon is independent and survives the UI.
-            pass
-        finally:
-            self._app.quit()
+        # The daemon is a separate process and survives the UI on
+        # purpose; we only quit the Qt app here.
+        self._app.quit()
 
 
 # ── Entry point ─────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ from textual.widgets import (
 )
 
 from ..client import DaemonClient, DaemonError, DaemonNotRunning
+from ..config import slugify
 from .screens.confirm_delete import ConfirmDeleteScreen, DeleteConfirmation
 from .screens.cookies import CookiesScreen
 from .screens.libraries import LibrariesScreen
@@ -134,10 +135,13 @@ class MixtapeTUI(App):
         elif name == "library.changed":
             self.refresh_state()
         elif name == "cookies.status":
+            self.state["cookies"] = {"state": data.get("state"), "message": data.get("message")}
             self._set_status_bar()
         elif name == "bgutil.status":
+            self.state["bgutil"] = {"state": data.get("state"), "message": data.get("message")}
             self._set_status_bar()
         elif name == "update.status":
+            self.state["update"] = dict(data)
             self._set_status_bar()
         elif name == "volume.added":
             log_w.write(f"[cyan]🔌[/cyan] volume plugged: {data.get('label') or data.get('identifier')}")
@@ -155,9 +159,11 @@ class MixtapeTUI(App):
 
     async def _refresh_state_impl(self) -> None:
         try:
-            self.state = await self.client.status()
-            self.libraries = await self.client.libraries()
-            self.playlists = await self.client.playlists()
+            self.state, self.libraries, self.playlists = await asyncio.gather(
+                self.client.status(),
+                self.client.libraries(),
+                self.client.playlists(),
+            )
         except DaemonError as e:
             self._log(f"[red]daemon error: {e}[/red]")
             return
@@ -199,7 +205,7 @@ class MixtapeTUI(App):
         for i, p in enumerate(self.playlists):
             last = p.get("last_sync") or "—"
             tracks = str(p.get("track_count") or "—")
-            folder = p.get("relative_path") or _slug(p.get("name", ""))
+            folder = p.get("relative_path") or slugify(p.get("name", ""))
             fmt = p.get("format", "?")
             if not p.get("requires_cookies"):
                 fmt = f"{fmt} [dim](public)[/dim]"
@@ -320,12 +326,6 @@ class MixtapeTUI(App):
             return int(row_key.value)
         except (ValueError, TypeError):
             return None
-
-
-def _slug(name: str) -> str:
-    import re
-    s = re.sub(r"[^\w\s-]", "", name).strip()
-    return re.sub(r"\s+", " ", s) or "playlist"
 
 
 def run_tui() -> int:

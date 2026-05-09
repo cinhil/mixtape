@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 
-from .config import COOKIES_FILE, write_cookies
+from .config import COOKIES_FILE, validate_cookies_text, write_cookies
 from .cookies_check import get_cookie_status, invalidate_cache
 
 
@@ -22,16 +22,12 @@ def set_cookies_from_stdin() -> int:
         )
         return 2
     text = sys.stdin.read()
-    if not text.strip():
-        sys.stderr.write("Empty input — refusing to overwrite cookies file.\n")
+    try:
+        normalised = validate_cookies_text(text)
+    except ValueError as e:
+        sys.stderr.write(f"{e}\n")
         return 1
-    if "youtube" not in text.lower() and not text.lstrip().startswith("# Netscape"):
-        sys.stderr.write(
-            "Input doesn't look like a Netscape cookies.txt for YouTube — refusing.\n"
-            "Use the 'Get cookies.txt LOCALLY' browser extension on music.youtube.com.\n"
-        )
-        return 1
-    write_cookies(text + ("\n" if not text.endswith("\n") else ""))
+    write_cookies(normalised)
     sys.stdout.write(f"Cookies written to {COOKIES_FILE}.\n")
 
     # Re-validate immediately so the user gets an answer in the same SSH call.

@@ -27,6 +27,10 @@ class WatcherService:
         self._library = library
         self._watcher: VolumeWatcher | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        # identifier → marker UUID (or "" for "no marker"). Lets us
+        # skip the per-volume marker probe on duplicate change events
+        # — find_marker_on_volume reads from disk + parses YAML.
+        self._marker_cache: dict[str, str] = {}
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -55,28 +59,27 @@ class WatcherService:
                 mount_path=str(vol.mount_path),
                 fs_type=vol.fs_type,
             )
-            await self._maybe_match_library(str(vol.mount_path))
+            if vol.identifier not in self._marker_cache:
+                await self._maybe_match_library(vol.identifier, str(vol.mount_path))
         for ident in change.removed:
+            self._marker_cache.pop(ident, None)
             self._bus.publish("volume.removed", identifier=ident)
             await self._maybe_active_went_offline()
 
-    async def _maybe_match_library(self, mount_path: str) -> None:
-        cfg = self._library.config
-        # Marker-based match — the canonical identity. The legacy
-        # label-fallback path that used to live here is intentionally
-        # omitted: marker UUIDs are written by mixtape on first
-        # registration so any device created with this version (or any
-        # older one that's been touched once) carries one.
+    async def _maybe_match_library(self, identifier: str, mount_path: str) -> None:
         marker_hit = await asyncio.to_thread(find_marker_on_volume, Path(mount_path))
-        if marker_hit:
-            marker, marker_root = marker_hit
-            lib = cfg.get_library_by_uuid(marker.uuid)
-            if lib:
-                new_path = str(marker_root)
-                if lib.path != new_path:
-                    lib.path = new_path
-                    await asyncio.to_thread(cfg.save)
-                await self._library.set_active_library(lib.name)
+        if not marker_hit:
+            self._marker_cache[identifier] = ""
+            return
+        marker, marker_root = marker_hit
+        self._marker_cache[identifier] = marker.uuid
+        lib = self._library.config.get_library_by_uuid(marker.uuid)
+        if not lib:
+            return
+        # Goes through the library service so the lock + library.changed
+        # event are honoured (avoids racing other writers).
+        await self._library.update_library_path(marker.uuid, str(marker_root))
+        await self._library.set_active_library(lib.name)
 
     async def _maybe_active_went_offline(self) -> None:
         active = (await self._library.active_library())

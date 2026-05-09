@@ -118,3 +118,53 @@ def daemon_pid_alive(pid: int) -> bool:
 
 def now_ts() -> float:
     return time.time()
+
+
+def daemon_launch_argv() -> list[str]:
+    """Build the argv used to start ``mixtape-daemon`` as a subprocess.
+
+    Prefers ``pythonw.exe`` next to the current interpreter on Windows
+    (Windows-subsystem PE — no console window). Falls back to the
+    ``mixtape-daemon`` console script if it's on PATH, then to
+    ``python -m mixtape.daemon.main``. Used by the desktop autostart
+    shortcut and by the client when it auto-spawns the daemon."""
+    import sys
+    if sys.platform == "win32":
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if pythonw.is_file():
+            return [str(pythonw), "-m", "mixtape.daemon.main"]
+    import shutil
+    on_path = shutil.which("mixtape-daemon")
+    if on_path:
+        return [on_path]
+    return [sys.executable, "-m", "mixtape.daemon.main"]
+
+
+def detached_popen_kwargs() -> dict[str, object]:
+    """Popen kwargs that fully detach a child from the calling console.
+
+    Windows: ``DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`` —
+    inherits no console, doesn't propagate Ctrl+C events.
+    POSIX: ``start_new_session=True`` — new session, parent can exit
+    without taking the child along."""
+    import subprocess
+    import sys
+    kwargs: dict[str, object] = {"close_fds": True}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = (
+            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        kwargs["start_new_session"] = True
+    return kwargs
+
+
+def no_window_creationflags() -> int:
+    """``CREATE_NO_WINDOW`` on Windows so a console-subsystem child
+    spawned from a console-less parent (the tray daemon) doesn't pop
+    its own terminal. ``0`` everywhere else."""
+    import sys
+    if sys.platform == "win32":
+        import subprocess
+        return int(subprocess.CREATE_NO_WINDOW)
+    return 0

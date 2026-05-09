@@ -18,16 +18,20 @@ class VolumeService:
     async def list(self) -> list[dict[str, Any]]:
         """Return all currently-mounted volumes that look user-relevant
         (removable / mounted in /Volumes / under /media), enriched with
-        a ``has_marker`` flag if a ``.mixtape`` marker is detectable."""
+        a marker descriptor if a ``.mixtape`` file is detectable."""
         from pathlib import Path
         vols = await asyncio.to_thread(self._backend.list_volumes)
+        # Probe markers in parallel — each call is a filesystem walk +
+        # YAML parse, fine to fan out for a handful of volumes.
+        marker_hits = await asyncio.gather(*(
+            asyncio.to_thread(find_marker_on_volume, Path(str(v.mount_path)))
+            for v in vols
+        ))
         out: list[dict[str, Any]] = []
-        for v in vols:
-            mount = Path(str(v.mount_path))
-            marker_hit = await asyncio.to_thread(find_marker_on_volume, mount)
+        for v, hit in zip(vols, marker_hits):
             marker = None
-            if marker_hit:
-                m, root = marker_hit
+            if hit is not None:
+                m, root = hit
                 marker = {"name": m.name, "uuid": m.uuid, "root": str(root)}
             out.append({
                 "identifier": v.identifier,

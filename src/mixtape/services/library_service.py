@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ..config import Config, Library, Playlist
+from ..config import Config, Library, Playlist, ensure_local_marker
 from .events import EventBus
 
 
@@ -72,6 +72,19 @@ class LibraryService:
             "track_count": p.track_count,
             "requires_cookies": p.requires_cookies,
         }
+
+    async def update_library_path(self, uuid: str, path: str) -> bool:
+        """Update a library's mount path (used by the watcher when a
+        registered USB volume reappears at a different mount). Returns
+        True if anything changed."""
+        async with self._lock:
+            lib = self._cfg.get_library_by_uuid(uuid)
+            if lib is None or lib.path == path:
+                return False
+            lib.path = path
+            await asyncio.to_thread(self._cfg.save)
+            self._bus.publish("library.changed", **self._snapshot())
+            return True
 
     async def set_active_library(self, name: str) -> bool:
         async with self._lock:
@@ -173,7 +186,6 @@ class LibraryService:
         """Add a library entry. If ``create_marker`` is True, write a
         ``.mixtape`` marker (UUID + name) into ``path`` so the device
         becomes recognisable across machines."""
-        from .. import config as _cfg_mod
         async with self._lock:
             existing = self._cfg.get_library(name)
             if existing is not None:
@@ -184,9 +196,7 @@ class LibraryService:
             )
             if create_marker:
                 lib.uuid = await asyncio.to_thread(
-                    _cfg_mod._ensure_local_marker,
-                    Path(path).expanduser(),
-                    name,
+                    ensure_local_marker, Path(path).expanduser(), name,
                 )
             await asyncio.to_thread(self._cfg.add_library, lib)
             self._bus.publish("library.changed", **self._snapshot())
@@ -202,7 +212,6 @@ class LibraryService:
 
         Returns the resulting library snapshot (name, path, uuid)."""
         from ..library_marker import find_marker_on_volume
-        from .. import config as _cfg_mod
         async with self._lock:
             mount = Path(mount_path).expanduser()
             if not mount.is_dir():
@@ -226,9 +235,7 @@ class LibraryService:
                 return {"name": lib.name, "path": lib.path, "uuid": lib.uuid, "created": True}
             # No marker → create one + register a fresh library.
             name = fallback_name or mount.name or "USB"
-            uuid = await asyncio.to_thread(
-                _cfg_mod._ensure_local_marker, mount, name,
-            )
+            uuid = await asyncio.to_thread(ensure_local_marker, mount, name)
             lib = Library(name=name, path=str(mount), uuid=uuid)
             await asyncio.to_thread(self._cfg.add_library, lib)
             self._bus.publish("library.changed", **self._snapshot())

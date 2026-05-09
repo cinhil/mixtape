@@ -37,12 +37,11 @@ class Application:
 
     async def start(self) -> None:
         log.info("application starting (pid %d)", os.getpid())
-        # bgutil + watcher first — they are needed as soon as the user
-        # touches anything.
-        await self.bgutil.start()
-        await self.watcher.start()
-        # cookies + updates are best-effort and shouldn't block startup
-        # if their network call hangs.
+        # bgutil's deno spawn and the volume watcher's first poll both
+        # take noticeable wall-clock time on a cold cache; run them
+        # together so startup is dominated by whichever is slower.
+        await asyncio.gather(self.bgutil.start(), self.watcher.start())
+        # cookies + updates do network I/O; never block daemon ready on them.
         asyncio.create_task(self.cookies.start())
         asyncio.create_task(self.updates.start())
         self._started_at = time.time()

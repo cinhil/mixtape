@@ -17,8 +17,6 @@ import asyncio
 import json
 import logging
 import subprocess
-import sys
-from pathlib import Path
 from typing import Any, AsyncIterator
 
 import httpx
@@ -28,7 +26,9 @@ from websockets.exceptions import ConnectionClosed
 
 from ..daemon.bootstrap import (
     DaemonInfo,
+    daemon_launch_argv,
     daemon_pid_alive,
+    detached_popen_kwargs,
     read_daemon_info,
 )
 
@@ -247,42 +247,16 @@ class DaemonClient:
 
 
 def _spawn_daemon() -> None:
-    """Spawn ``mixtape-daemon`` (or ``python -m mixtape.daemon.main``)
-    detached from the current console. Best-effort — caller polls for
-    api.json afterwards."""
-    cmd = _daemon_cmd()
+    """Best-effort daemon spawn — caller polls for ``state/api.json``."""
+    cmd = daemon_launch_argv()
     log.info("spawning daemon: %s", cmd)
-    popen_kwargs: dict[str, Any] = {
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-        "close_fds": True,
-    }
-    if sys.platform == "win32":
-        popen_kwargs["creationflags"] = (
-            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        )
-    else:
-        popen_kwargs["start_new_session"] = True
     try:
-        subprocess.Popen(cmd, **popen_kwargs)
+        subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **detached_popen_kwargs(),
+        )
     except OSError as e:
         log.warning("daemon spawn failed: %s", e)
-
-
-def _daemon_cmd() -> list[str]:
-    """Build the command vector for spawning the daemon. Prefer the
-    pythonw/python next to the current interpreter so we run inside
-    the venv even if PATH doesn't have it."""
-    if sys.platform == "win32":
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
-        if pythonw.is_file():
-            return [str(pythonw), "-m", "mixtape.daemon.main"]
-        return [sys.executable, "-m", "mixtape.daemon.main"]
-    # Try the project script first (pip-installed `mixtape-daemon`),
-    # else fall back to `python -m`.
-    import shutil
-    on_path = shutil.which("mixtape-daemon")
-    if on_path:
-        return [on_path]
-    return [sys.executable, "-m", "mixtape.daemon.main"]

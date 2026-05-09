@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 
 
 # ── Windows ────────────────────────────────────────────────────────────────
@@ -40,17 +41,21 @@ def _windows_shortcut_path() -> Path:
 
 def _windows_enable() -> bool:
     """Create a .lnk shortcut that launches the daemon at user logon.
-    Uses ``pythonw.exe`` so no console window appears."""
-    pythonw = Path(sys.executable).with_name("pythonw.exe")
-    runner = str(pythonw if pythonw.is_file() else sys.executable)
+    Re-uses ``daemon_launch_argv`` so the executable + args match what
+    the client uses when it auto-spawns the daemon — single source of
+    truth for "how to start the daemon"."""
+    from .daemon.bootstrap import daemon_launch_argv
+    argv = daemon_launch_argv()
+    target = argv[0]
+    args = " ".join(argv[1:])
     try:
         ps_script = (
             f"$WshShell = New-Object -ComObject WScript.Shell;"
             f"$lnk = $WshShell.CreateShortcut('{_windows_shortcut_path()}');"
-            f"$lnk.TargetPath = '{runner}';"
-            f"$lnk.Arguments = '-m mixtape.daemon.main';"
+            f"$lnk.TargetPath = '{target}';"
+            f"$lnk.Arguments = '{args}';"
             f"$lnk.WorkingDirectory = '{Path.home()}';"
-            f"$lnk.WindowStyle = 7;"  # minimized; pythonw has no console anyway
+            f"$lnk.WindowStyle = 7;"  # minimized — pythonw has no console anyway
             f"$lnk.Description = 'mixtape daemon (background sync engine)';"
             f"$lnk.Save();"
         )
@@ -198,40 +203,32 @@ def _macos_is_enabled() -> bool:
 
 # ── Public API ─────────────────────────────────────────────────────────────
 
+def _backend_for_platform() -> tuple[Callable[[], bool], Callable[[], bool], Callable[[], bool]] | None:
+    """Return (enable, disable, is_enabled) for the current OS, or None."""
+    if sys.platform == "win32":
+        return (_windows_enable, _windows_disable, _windows_is_enabled)
+    if sys.platform == "darwin":
+        return (_macos_enable, _macos_disable, _macos_is_enabled)
+    if sys.platform.startswith("linux"):
+        return (_linux_enable, _linux_disable, _linux_is_enabled)
+    return None
+
+
 def is_supported() -> bool:
     """Whether autostart can be configured on this platform via this module."""
-    return (
-        sys.platform == "win32"
-        or sys.platform == "darwin"
-        or sys.platform.startswith("linux")
-    )
-
-
-def is_enabled() -> bool:
-    if sys.platform == "win32":
-        return _windows_is_enabled()
-    if sys.platform == "darwin":
-        return _macos_is_enabled()
-    if sys.platform.startswith("linux"):
-        return _linux_is_enabled()
-    return False
+    return _backend_for_platform() is not None
 
 
 def enable() -> bool:
-    if sys.platform == "win32":
-        return _windows_enable()
-    if sys.platform == "darwin":
-        return _macos_enable()
-    if sys.platform.startswith("linux"):
-        return _linux_enable()
-    return False
+    backend = _backend_for_platform()
+    return backend[0]() if backend else False
 
 
 def disable() -> bool:
-    if sys.platform == "win32":
-        return _windows_disable()
-    if sys.platform == "darwin":
-        return _macos_disable()
-    if sys.platform.startswith("linux"):
-        return _linux_disable()
-    return False
+    backend = _backend_for_platform()
+    return backend[1]() if backend else False
+
+
+def is_enabled() -> bool:
+    backend = _backend_for_platform()
+    return backend[2]() if backend else False

@@ -137,13 +137,15 @@ def _list_volumes_powershell(*, wsl_paths: bool = True) -> list[Volume]:
         "Select-Object DriveLetter, FileSystemLabel, DriveType, FileSystemType, Size, SizeRemaining "
         "| ConvertTo-Json -Compress",
     ]
+    from .daemon.bootstrap import no_window_creationflags
     run_kwargs: dict = {
         "capture_output": True, "timeout": 10, "text": True, "check": True,
     }
-    if os.name == "nt":
-        # Without this, the console-less tray process makes Windows pop a
-        # fresh terminal window every poll (~5s).
-        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    # Without this, the console-less daemon makes Windows pop a fresh
+    # terminal window for every Get-Volume probe.
+    flags = no_window_creationflags()
+    if flags:
+        run_kwargs["creationflags"] = flags
     try:
         result = subprocess.run(cmd, **run_kwargs)
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):

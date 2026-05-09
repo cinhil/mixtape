@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from ..config import write_cookies
+from ..config import validate_cookies_text, write_cookies
 from ..cookies_check import CookieStatus, get_cookie_status, invalidate_cache
 from .events import EventBus
 
@@ -42,31 +42,30 @@ class CookieService:
 
     async def write(self, content: str) -> CookieStatus:
         """Replace the cookies file with ``content`` (Netscape format) and
-        re-validate immediately. Used by the TUI cookie-paste form and
-        the desktop UI's settings dialog."""
-        if not content.strip():
-            raise ValueError("empty cookies content")
-        if "youtube" not in content.lower() and not content.lstrip().startswith("# Netscape"):
-            raise ValueError("doesn't look like a YouTube cookies.txt — refusing to overwrite")
-        normalised = content if content.endswith("\n") else content + "\n"
+        re-validate immediately."""
+        normalised = validate_cookies_text(content)
         await asyncio.to_thread(write_cookies, normalised)
-        # Immediately re-validate so the caller knows whether the cookies
-        # are accepted by YouTube.
         return await self.refresh(force=True)
 
-    async def refresh(self, *, force: bool = False) -> CookieStatus:
+    async def refresh(self, *, force: bool = False, announce: bool = True) -> CookieStatus:
         if force:
             await asyncio.to_thread(invalidate_cache)
-        self._bus.publish("cookies.status", state="unknown", message="checking…")
+        if announce:
+            # Optimistic "checking…" so user-initiated refreshes show a
+            # spinner. Skip from the periodic loop where it would just
+            # flicker the UI for nobody.
+            self._bus.publish("cookies.status", state="unknown", message="checking…")
         status = await asyncio.to_thread(get_cookie_status, force)
-        self._status = status
-        self._bus.publish("cookies.status", state=status.state, message=status.message)
+        prev, self._status = self._status, status
+        if (prev.state, prev.message) != (status.state, status.message):
+            self._bus.publish("cookies.status", state=status.state, message=status.message)
         return status
 
     async def _periodic(self) -> None:
         try:
             while True:
                 await asyncio.sleep(PERIODIC_INTERVAL_S)
-                await self.refresh(force=True)
+                # Quiet refresh — only emits if the status actually changed.
+                await self.refresh(force=True, announce=False)
         except asyncio.CancelledError:
             pass

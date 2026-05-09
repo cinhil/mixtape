@@ -119,15 +119,17 @@ class BgutilServer:
         log_fp = self._log_path.open("a", encoding="utf-8")
         log_fp.write(f"\n--- start {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
         log_fp.flush()
+        from .daemon.bootstrap import no_window_creationflags
         popen_kwargs: dict = {
             "env": env, "cwd": str(server_dir),
             "stdin": subprocess.DEVNULL, "stdout": log_fp, "stderr": log_fp,
         }
-        if os.name == "nt":
-            # When mixtape runs from the tray (no console), spawning a
-            # console-subsystem child like deno.exe with default flags
-            # makes Windows pop a fresh terminal window. Suppress it.
-            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        # On Windows, a console-less daemon (DETACHED_PROCESS) spawning a
+        # console-subsystem child like deno.exe makes the OS allocate a
+        # console window. CREATE_NO_WINDOW suppresses it.
+        flags = no_window_creationflags()
+        if flags:
+            popen_kwargs["creationflags"] = flags
         try:
             self._proc = subprocess.Popen(cmd, **popen_kwargs)
         except OSError as e:
