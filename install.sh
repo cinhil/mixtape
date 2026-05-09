@@ -118,10 +118,15 @@ fi
 # 5. Python deps + bgutil companion -------------------------------------------
 cyan ""
 cyan "=== Step 5/6 — Python deps + bgutil companion ==="
+# Always pull the freshest yt-dlp (the rev = "master" entry in pyproject is
+# pinned by uv.lock, so we need this for actual updates). Cheap when nothing
+# has changed.
+step "Refreshing yt-dlp from upstream master …"
+uv lock --upgrade-package yt-dlp >/dev/null
 step "uv sync …"
 uv sync
-ok "Python deps installed"
-step "Setting up bgutil companion (~150 MB, one-time) …"
+ok "Python deps up to date"
+step "Setting up / refreshing bgutil companion …"
 ./setup-bgutil.sh
 ok "bgutil companion ready"
 

@@ -87,6 +87,36 @@ Re-run any time to update — it just `git pull`s.
 - **Windows**: double-click the *mixtape* shortcut on your desktop
 - **Linux**: `cd ~/.local/share/mixtape-app && ./run.sh`
 
+### Updates
+
+**Re-run the same one-liner** to update everything in one shot:
+
+```bash
+# Linux
+curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash
+```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1 | iex
+```
+
+The installer is idempotent — it detects the existing checkout and:
+
+1. `git pull --ff-only` — picks up new mixtape commits
+2. `uv lock --upgrade-package yt-dlp && uv sync` — pulls the latest yt-dlp
+   (this is the most important one: YouTube changes its player JS often, so
+   yt-dlp ships fixes nearly every day)
+3. Re-runs `setup-bgutil.sh` / `setup-bgutil.ps1` — bumps the bgutil
+   companion if its pinned version was bumped
+
+How often: re-run **whenever a sync starts failing on every track** — that's
+almost always a yt-dlp staleness issue. Otherwise, monthly is plenty.
+
+Cookies are independent — they expire roughly every 30 days. The TUI shows
+`✗ cookies expired` in the status bar when that happens; press `c` to paste
+fresh ones from your browser.
+
 In the TUI:
 - `c` paste cookies (use a browser extension like *Get cookies.txt LOCALLY*)
 - `a` add a playlist (paste URL → title auto-fetched)

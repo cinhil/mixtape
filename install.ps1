@@ -101,9 +101,13 @@ Set-Location $InstallDir
 
 # 3. Python deps --------------------------------------------------------------
 Header "Step 3/5 — Python dependencies"
+# Always pull the freshest yt-dlp (rev = "master" in pyproject is pinned by
+# uv.lock; this is what actually updates it). Cheap when nothing changed.
+Step "Refreshing yt-dlp from upstream master …"
+uv lock --upgrade-package yt-dlp 2>$null | Out-Null
 Step "uv sync …"
 uv sync
-OK "Python deps installed"
+OK "Python deps up to date"
 
 # 4. bgutil companion ---------------------------------------------------------
 Header "Step 4/5 — bgutil companion (~150 MB, one-time)"
