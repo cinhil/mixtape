@@ -60,6 +60,11 @@ uv sync
 
 ### Windows
 
+> Detailed step-by-step guide with troubleshooting:
+> **[docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md)**
+
+Short version:
+
 ```powershell
 # Prerequisites (one-time, via winget)
 winget install --id Python.Python.3.12 -e
@@ -69,7 +74,7 @@ winget install --id DenoLand.Deno -e
 winget install --id Git.Git -e
 # (open a fresh terminal so the new PATH entries are picked up)
 
-git clone git@github.com:cinhil/mixtape.git
+git clone https://github.com/cinhil/mixtape.git
 cd mixtape
 uv sync
 .\setup-bgutil.ps1
