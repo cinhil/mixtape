@@ -1,7 +1,7 @@
 [project]
 name = "mixtape"
-version = "0.1.0b1"
-description = "TUI that mirrors curated YouTube Music playlists onto USB MP3 players, with auto-detection and per-playlist audio format"
+version = "0.1.0b2"
+description = "Headless background daemon that syncs curated YouTube Music playlists onto USB MP3 players, with thin TUI / native Qt clients"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
 authors = [

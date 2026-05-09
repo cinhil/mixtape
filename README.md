@@ -1,7 +1,8 @@
 # mixtape
 
 > ⚠️ **Beta — `0.1.0b2`** · daemon-and-clients architecture; expect
-> rough edges, please file issues.
+> rough edges, please file issues. See [CHANGELOG.md](CHANGELOG.md)
+> for the full release notes.
 
 > Mixtapes for the streaming era — a **headless background daemon**
 > that syncs curated YouTube Music playlists onto USB MP3 players,
