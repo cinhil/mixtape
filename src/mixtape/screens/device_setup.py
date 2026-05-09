@@ -8,8 +8,10 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Footer, Input, Label, ListItem, ListView, Select, Static
 
-from ..config import Config, Library
-from ..library_marker import LibraryMarker, read_marker, write_marker
+from ..config import Config, Library, Playlist
+from ..library_marker import (
+    LibraryMarker, discover_playlists, read_marker, write_marker,
+)
 from ..platform_io import Volume, detect_backend
 
 
@@ -195,7 +197,35 @@ class DeviceSetupScreen(ModalScreen[Library | None]):
         except ValueError as e:
             self.app.notify(str(e), severity="error")
             return
-        self.app.notify(f"Library '{name}' registered (uuid: {uid[:8]}…).")
+
+        # Auto-import any playlists already present on the library (read from
+        # each subdir's .manifest.yaml). De-duped by URL against what's in the
+        # central config — a playlist already known on this machine is never
+        # added twice.
+        imported = 0
+        if root.is_dir():
+            known_urls = {p.url for p in self.config.playlists}
+            for entry in discover_playlists(root):
+                if entry["url"] in known_urls:
+                    continue
+                self.config.playlists.append(Playlist(
+                    name=entry["name"],
+                    url=entry["url"],
+                    format=entry["format"],
+                    quality=entry["quality"],
+                    relative_path=entry["relative_path"],
+                    requires_cookies=entry["requires_cookies"],
+                    track_count=entry.get("track_count", 0),
+                ))
+                known_urls.add(entry["url"])
+                imported += 1
+            if imported:
+                self.config.save()
+
+        msg = f"Library '{name}' registered (uuid: {uid[:8]}…)"
+        if imported:
+            msg += f" — imported {imported} playlist(s) from .mixtape device."
+        self.app.notify(msg, timeout=8)
         self.dismiss(self.config.get_library(name))
 
     def action_cancel(self) -> None:

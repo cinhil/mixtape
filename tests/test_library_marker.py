@@ -91,3 +91,55 @@ def test_discover_skips_subdirs_without_url(tmp_path):
 
 def test_discover_returns_empty_for_non_dir(tmp_path):
     assert discover_playlists(tmp_path / "missing") == []
+
+
+def test_discover_then_import_dedupes_by_url(tmp_path):
+    """Mimic what DeviceSetupScreen does: discover playlists on a freshly
+    plugged device, then merge them into the central config — without
+    duplicating ones the user already knows about."""
+    # Build a mini-library on the "device"
+    p_known = tmp_path / "Already known"
+    p_new = tmp_path / "Brand new"
+    p_known.mkdir(); p_new.mkdir()
+    Manifest(
+        url="https://music.youtube.com/playlist?list=KNOWN",
+        name="Already known", format="mp3", quality="0",
+        tracks={"v": Track(number=1, title="t", filename="001 - t.mp3")},
+    ).save(p_known / ".manifest.yaml")
+    Manifest(
+        url="https://music.youtube.com/playlist?list=NEW",
+        name="Brand new", format="m4a", quality="192",
+        requires_cookies=False,
+        tracks={},
+    ).save(p_new / ".manifest.yaml")
+
+    # User's central config already has the "known" one
+    from mixtape.config import Playlist
+    central: list[Playlist] = [
+        Playlist(name="Already known", url="https://music.youtube.com/playlist?list=KNOWN",
+                 format="mp3", quality="0"),
+    ]
+
+    # The merge logic the device-setup screen runs
+    known_urls = {p.url for p in central}
+    imported = 0
+    for entry in discover_playlists(tmp_path):
+        if entry["url"] in known_urls:
+            continue
+        central.append(Playlist(
+            name=entry["name"], url=entry["url"],
+            format=entry["format"], quality=entry["quality"],
+            relative_path=entry["relative_path"],
+            requires_cookies=entry["requires_cookies"],
+        ))
+        known_urls.add(entry["url"])
+        imported += 1
+
+    assert imported == 1
+    assert {p.url for p in central} == {
+        "https://music.youtube.com/playlist?list=KNOWN",
+        "https://music.youtube.com/playlist?list=NEW",
+    }
+    new_one = next(p for p in central if p.url.endswith("NEW"))
+    assert new_one.requires_cookies is False
+    assert new_one.format == "m4a"
