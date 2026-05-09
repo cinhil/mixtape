@@ -183,12 +183,56 @@ emitted.
 
 ## How it works
 
-- **One folder per playlist** under each library root (e.g.
-  `~/Music/mixtape/<playlist>/` or `/media/<user>/<USB>/<playlist>/`).
+- **One folder per playlist** under each library root.
 - A per-playlist `.archive` (yt-dlp's record of downloaded video IDs) and
-  `.manifest.yaml` (track number ↔ filename mapping) drive incremental syncs.
+  `.manifest.yaml` (track number ↔ filename mapping + the playlist's URL,
+  format, and quality) drive incremental syncs.
 - Re-orderings on YouTube are detected and trigger renames on disk, never
   re-downloads.
+
+### Library layout — fully self-describing
+
+Each library (a folder on a PC drive or a USB device) carries its own
+identity and the metadata of every playlist it holds. There is **no
+machine-specific state on the device** — plug it into another mixtape
+installation and everything is rediscovered from disk:
+
+```
+<library-root>/
+├── .mixtape                       # library identity (UUID + name)
+├── sync.log                       # human-readable per-library sync history
+├── Road Trip 2026/                # one folder per playlist
+│   ├── .manifest.yaml             # url, format, quality, track ↔ file map
+│   ├── .archive                   # yt-dlp's "already downloaded" record
+│   ├── 001 - Artist - Track.m4a
+│   ├── 002 - Artist - Track.m4a
+│   └── …
+├── Workout Mix/
+│   ├── .manifest.yaml
+│   ├── .archive
+│   └── …
+└── Chill Evening/
+    └── …
+```
+
+**`.mixtape`** at the root holds the library's stable UUID — when you re-plug
+the device on a different machine (drive letter changed, fresh mixtape
+install), it's recognised by that UUID, not by volume label.
+
+**`.manifest.yaml`** in each playlist folder is the playlist's own snapshot:
+its YouTube URL, audio format, quality preset, the cookies-required flag,
+and the per-track number ↔ filename mapping. That's enough for any mixtape
+installation to re-import the playlist without consulting the user's
+central config.
+
+What this enables:
+- Plug your USB MP3 player into a friend's mixtape: it's registered as a
+  known library and you can keep syncing the same playlists from there.
+- Move from PC to Raspberry Pi: install mixtape on the RPi, plug the
+  device, hit "register" — every playlist appears with its existing
+  numbering and audio files preserved.
+- Multiple devices side-by-side: each one has its own UUID and its own
+  playlist set; mixtape switches the *active* library on plug-in.
 
 ## TUI key bindings (main screen)
 
