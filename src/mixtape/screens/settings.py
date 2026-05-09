@@ -6,8 +6,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Label, Static
-from ..widgets import Checkbox
+from textual.widgets import Button, Footer, Label, Static, Switch
 
 from .. import autostart
 from ..config import Config
@@ -15,12 +14,13 @@ from ..tray import kill_running_tray, spawn_detached, tray_is_running
 
 
 class SettingsScreen(ModalScreen[None]):
-    """User-facing toggles: start at login, launch tray now."""
+    """User-facing toggles: auto-start at login, close-to-tray on quit,
+    and a live tray-running switch."""
 
     CSS = """
     SettingsScreen { align: center middle; }
     #dialog {
-        width: 86; height: auto;
+        width: 90; height: auto;
         border: round $primary; background: $surface;
         padding: 1 2;
     }
@@ -28,7 +28,10 @@ class SettingsScreen(ModalScreen[None]):
         height: 1; margin: 1 0 1 0;
         text-style: bold; color: $primary;
     }
-    .info { color: $text-muted; height: auto; min-height: 1; margin: 0 0 1 2; }
+    .toggle-row { height: 3; align: left middle; }
+    .toggle-row Switch { margin: 0 1 0 0; }
+    .toggle-row Label { width: 1fr; padding-top: 1; }
+    .info { color: $text-muted; height: auto; min-height: 1; margin: 0 0 1 4; }
     #buttons { height: 3; align: center middle; margin-top: 1; }
     Button { margin: 0 1; }
     #status { color: $text-muted; height: auto; min-height: 1; margin: 1 0; }
@@ -45,13 +48,11 @@ class SettingsScreen(ModalScreen[None]):
 
             yield Static("── Options ──", classes="section-header")
 
-            # 1) Auto-start
+            # 1) Auto-start at login
             if autostart.is_supported():
-                yield Checkbox(
-                    "Start mixtape at login (background, in the tray)",
-                    value=autostart.is_enabled(),
-                    id="autostart",
-                )
+                with Horizontal(classes="toggle-row"):
+                    yield Switch(value=autostart.is_enabled(), id="autostart")
+                    yield Label("Start mixtape at login (background, in the tray)")
                 where = (
                     "%APPDATA%\\…\\Startup\\mixtape.lnk" if sys.platform == "win32"
                     else "~/.config/autostart/mixtape.desktop"
@@ -60,25 +61,21 @@ class SettingsScreen(ModalScreen[None]):
             else:
                 yield Static("[yellow]Auto-start not supported on this platform.[/yellow]", classes="info")
 
-            # 2) Close-to-tray (preference, persisted in config)
-            yield Checkbox(
-                "Close window to system tray (keep running on quit)",
-                value=cfg.close_to_tray,
-                id="close-to-tray",
-            )
+            # 2) Close-to-tray (preference, persisted in config.yaml)
+            with Horizontal(classes="toggle-row"):
+                yield Switch(value=cfg.close_to_tray, id="close-to-tray")
+                yield Label("Close window to system tray (keep running on quit)")
             yield Static(
                 "When on, pressing 'q' / Ctrl+C launches the tray and the USB "
                 "watcher keeps running. When off, the app fully exits.",
                 classes="info",
             )
 
-            # 3) Tray running (live state — flipping it spawns / kills the tray)
+            # 3) Tray running (live state — flipping it spawns / kills the daemon)
             running = tray_is_running()
-            yield Checkbox(
-                self._tray_label(running),
-                value=running,
-                id="tray-running",
-            )
+            with Horizontal(classes="toggle-row"):
+                yield Switch(value=running, id="tray-running")
+                yield Label(self._tray_label(running), id="tray-running-label")
             yield Static(
                 "Spawns or stops the tray daemon right now. The tray runs in the "
                 "background, watches USB plug events, and shows a clickable icon.",
@@ -95,12 +92,15 @@ class SettingsScreen(ModalScreen[None]):
         return cfg if isinstance(cfg, Config) else Config.load()
 
     def _tray_label(self, running: bool) -> str:
-        return "Tray running [green](active)[/green]" if running else "Tray running [dim](stopped)[/dim]"
+        return (
+            "Tray running [green](active)[/green]" if running
+            else "Tray running [dim](stopped)[/dim]"
+        )
 
-    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        cb_id = event.checkbox.id
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        sw_id = event.switch.id
         msg_status = self.query_one("#status", Static)
-        if cb_id == "autostart":
+        if sw_id == "autostart":
             ok = autostart.enable() if event.value else autostart.disable()
             if ok:
                 msg_status.update(
@@ -110,8 +110,8 @@ class SettingsScreen(ModalScreen[None]):
                 )
             else:
                 msg_status.update("[red]✗ couldn't update the autostart entry.[/red]")
-                event.checkbox.value = not event.value
-        elif cb_id == "close-to-tray":
+                event.switch.value = not event.value
+        elif sw_id == "close-to-tray":
             cfg = self._cfg()
             cfg.close_to_tray = bool(event.value)
             cfg.save()
@@ -120,33 +120,31 @@ class SettingsScreen(ModalScreen[None]):
                 if event.value else
                 "[green]✓ closing the window will fully exit.[/green]"
             )
-        elif cb_id == "tray-running":
+        elif sw_id == "tray-running":
             self._toggle_tray(event)
 
-    def _toggle_tray(self, event: Checkbox.Changed) -> None:
+    def _toggle_tray(self, event: Switch.Changed) -> None:
         msg_status = self.query_one("#status", Static)
-        cb = event.checkbox
+        sw = event.switch
         if event.value:
             ok, msg = spawn_detached()
             if not ok:
                 msg_status.update(f"[red]✗ {msg}[/red]")
-                cb.value = False
+                sw.value = False
                 return
-            msg_status.update("[yellow]… launching tray (may take a few seconds on cold start)[/yellow]")
-            # Poll for the PID file rather than guessing a fixed delay —
-            # pystray's first launch on Windows can take several seconds
-            # (OLE init, icon resource load).
+            msg_status.update(
+                "[yellow]… launching tray (may take a few seconds on cold start)[/yellow]"
+            )
             self._tray_wait_deadline = 5.0
             self._tray_wait_elapsed = 0.0
             self.set_timer(0.4, self._poll_tray_started)
         else:
             ok, msg = kill_running_tray()
+            self._refresh_tray_label()
             if ok:
-                self._refresh_tray_label()
                 msg_status.update(f"[green]✓ {msg}.[/green]")
             else:
                 msg_status.update(f"[yellow]{msg}[/yellow]")
-                self._refresh_tray_label()
 
     def _poll_tray_started(self) -> None:
         if tray_is_running():
@@ -166,14 +164,18 @@ class SettingsScreen(ModalScreen[None]):
         self.set_timer(0.4, self._poll_tray_started)
 
     def _refresh_tray_label(self) -> None:
-        try:
-            cb = self.query_one("#tray-running", Checkbox)
-        except Exception:
-            return
         running = tray_is_running()
-        cb.label = self._tray_label(running)
-        if cb.value != running:
-            cb.value = running
+        try:
+            sw = self.query_one("#tray-running", Switch)
+            if sw.value != running:
+                sw.value = running
+        except Exception:
+            pass
+        try:
+            lbl = self.query_one("#tray-running-label", Label)
+            lbl.update(self._tray_label(running))
+        except Exception:
+            pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close":
