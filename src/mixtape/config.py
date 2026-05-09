@@ -2,20 +2,49 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "mixtape"
+def _config_root() -> Path:
+    """User config dir — XDG on Linux, %APPDATA% on Windows."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "mixtape"
+
+
+def _data_root() -> Path:
+    """User data dir — XDG on Linux, %LOCALAPPDATA% on Windows."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    return base / "mixtape"
+
+
+def _state_root() -> Path:
+    """User state dir — XDG on Linux, %LOCALAPPDATA%/state on Windows."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+        return base / "mixtape" / "state"
+    base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    return base / "mixtape"
+
+
+CONFIG_DIR = _config_root()
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 COOKIES_FILE = CONFIG_DIR / "cookies.txt"
 
 # Path of the optional bgutil-ytdlp-pot-provider companion (JS) — required by
 # upstream yt-dlp changes since 2024 for full audio-format compatibility.
-DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "mixtape"
+DATA_DIR = _data_root()
 BGUTIL_SERVER_DIR = DATA_DIR / "bgutil-server"
+STATE_DIR = _state_root()
 
 
 def bgutil_server_path() -> Path | None:

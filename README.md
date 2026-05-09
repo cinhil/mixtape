@@ -46,10 +46,34 @@ entirely local.
 
 ## Quick start
 
+### Linux / Raspberry Pi
+
 ```bash
-uv sync                 # install Python deps
-./setup-bgutil.sh       # one-time: install Deno-based audio resolution helper
-./run.sh                # launch the TUI
+sudo apt install ffmpeg git
+curl -fsSL https://deno.land/install.sh | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+git clone git@github.com:cinhil/mixtape.git && cd mixtape
+uv sync
+./setup-bgutil.sh
+./run.sh
+```
+
+### Windows
+
+```powershell
+# Prerequisites (one-time, via winget)
+winget install --id Python.Python.3.12 -e
+winget install --id astral-sh.uv -e
+winget install --id Gyan.FFmpeg -e
+winget install --id DenoLand.Deno -e
+winget install --id Git.Git -e
+# (open a fresh terminal so the new PATH entries are picked up)
+
+git clone git@github.com:cinhil/mixtape.git
+cd mixtape
+uv sync
+.\setup-bgutil.ps1
+.\run.ps1
 ```
 
 In the TUI:
@@ -129,10 +153,9 @@ these — the TUI manages everything.
 
 | Path | Contents |
 |------|----------|
-| `~/.config/mixtape/config.yaml` | Libraries, playlists, defaults |
-| `~/.config/mixtape/cookies.txt` | YouTube cookies (chmod 600) |
-| `~/.local/share/mixtape/bgutil-server/` | Audio-resolution helper (set up by `setup-bgutil.sh`) |
-| `~/.local/state/mixtape/bgutil-server.log` | Daemon log |
+| `~/.config/mixtape/` (Linux) · `%APPDATA%\mixtape\` (Windows) | `config.yaml`, `cookies.txt` |
+| `~/.local/share/mixtape/` (Linux) · `%LOCALAPPDATA%\mixtape\` (Windows) | `bgutil-server/` companion |
+| `~/.local/state/mixtape/` (Linux) · `%LOCALAPPDATA%\mixtape\state\` (Windows) | `bgutil-server.log` |
 | `<library>/sync.log` | Per-library sync history |
 | `<library>/<playlist>/.archive` · `.manifest.yaml` | Per-playlist sync state |
 

@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .config import bgutil_server_path
+from .config import STATE_DIR, bgutil_server_path
 
 DEFAULT_PORT = 4416
 SERVER_URL = f"http://127.0.0.1:{DEFAULT_PORT}"
@@ -26,9 +26,15 @@ START_TIMEOUT = 15.0
 
 
 def _find_deno() -> str | None:
+    home = os.path.expanduser("~")
     candidates = [
-        os.path.expanduser("~/.deno/bin/deno"),
+        # Windows: Deno's installer drops deno.exe under %USERPROFILE%\.deno\bin
+        os.path.join(home, ".deno", "bin", "deno.exe"),
+        # POSIX layout
+        os.path.join(home, ".deno", "bin", "deno"),
+        # Anything on PATH (shutil.which honours PATHEXT on Windows so .exe is found)
         shutil.which("deno"),
+        shutil.which("deno.exe"),
     ]
     for path in candidates:
         if not path:
@@ -81,9 +87,8 @@ class BgutilServer:
         node_modules = server_dir / "node_modules"
         cache_dir = Path.home() / ".cache" / "bgutil-ytdlp-pot-provider"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        log_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "mixtape"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        self._log_path = log_dir / "bgutil-server.log"
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        self._log_path = STATE_DIR / "bgutil-server.log"
 
         env = {
             **os.environ,
