@@ -61,11 +61,17 @@ def is_linux() -> bool:
     return sys.platform.startswith("linux") and not is_wsl()
 
 
+def is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
 def platform_name() -> str:
     if is_wsl():
         return "wsl"
     if is_windows():
         return "windows"
+    if is_macos():
+        return "macos"
     if is_linux():
         return "linux"
     return sys.platform
@@ -103,11 +109,20 @@ class _LinuxBackend(_Backend):
         return _list_volumes_linux()
 
 
+# ── macOS backend (diskutil list -plist) ─────────────────────────────────────
+
+class _DarwinBackend(_Backend):
+    def list_volumes(self) -> list[Volume]:
+        return _list_volumes_darwin()
+
+
 def detect_backend() -> _Backend:
     if is_wsl():
         return _WSLBackend()
     if is_windows():
         return _WindowsBackend()
+    if is_macos():
+        return _DarwinBackend()
     if is_linux():
         return _LinuxBackend()
     return _Backend()
@@ -191,6 +206,67 @@ def _list_volumes_linux() -> list[Volume]:
                 ))
         except OSError:
             continue
+    return volumes
+
+
+def _list_volumes_darwin() -> list[Volume]:
+    """macOS: enumerate volumes under /Volumes. ``diskutil info -plist <path>``
+    gives us label, removable status, and free/total bytes — but the cheap
+    path is just iterating /Volumes. We only call diskutil for size/fs_type
+    so a missing diskutil falls back to ``statvfs``."""
+    import plistlib
+    root = Path("/Volumes")
+    if not root.is_dir():
+        return []
+    volumes: list[Volume] = []
+    for entry in root.iterdir():
+        try:
+            if not entry.is_dir():
+                continue
+        except OSError:
+            continue
+        # Skip the boot disk symlink ``/Volumes/Macintosh HD`` etc. only if
+        # it points at /. We err on the side of including too much; the
+        # downstream filter (.mixtape marker / volume_name match) is what
+        # decides what gets auto-mounted as a library.
+        try:
+            target = entry.resolve()
+            if target == Path("/"):
+                continue
+        except OSError:
+            pass
+        stat = _safe_stat(entry)
+        label = entry.name
+        fs_type = ""
+        is_removable = False
+        # Best-effort diskutil enrichment — silent on failure.
+        try:
+            run_kwargs: dict = {
+                "capture_output": True, "timeout": 5, "check": True,
+            }
+            result = subprocess.run(
+                ["diskutil", "info", "-plist", str(entry)], **run_kwargs,
+            )
+            info = plistlib.loads(result.stdout)
+            label = str(info.get("VolumeName") or info.get("DeviceIdentifier") or label)
+            fs_type = str(info.get("FilesystemUserVisibleName") or info.get("FilesystemName") or "")
+            # Removable iff RemovableMedia OR Ejectable OR a USB protocol.
+            is_removable = bool(
+                info.get("RemovableMedia") or info.get("Ejectable")
+                or "USB" in str(info.get("BusProtocol", "")).upper()
+            )
+        except (FileNotFoundError, subprocess.CalledProcessError,
+                subprocess.TimeoutExpired, plistlib.InvalidFileException, OSError):
+            pass
+        volumes.append(Volume(
+            identifier=str(entry),
+            label=label,
+            mount_path=entry,
+            fs_type=fs_type,
+            size_bytes=stat[0],
+            free_bytes=stat[1],
+            is_removable=is_removable,
+        ))
     return volumes
 
 

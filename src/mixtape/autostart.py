@@ -1,18 +1,23 @@
 """Cross-platform "start at login" helpers.
 
 - **Windows**: writes a `.lnk` shortcut to the user's Startup folder
-  (``%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup``). Picked
-  up by the user session at login. No admin needed, easy to remove.
-- **Linux**: writes an XDG autostart entry at
-  ``~/.config/autostart/mixtape.desktop``. Honoured by GNOME, KDE, XFCE,
-  Cinnamon… For headless RPi without a desktop session, prefer the
-  ``mixtape.service`` systemd unit instead.
+  launching the mixtape daemon at logon. Picked up by the user session
+  at login. No admin needed, easy to remove.
+- **Linux**: writes an XDG autostart entry
+  (``~/.config/autostart/mixtape-daemon.desktop``). Honoured by GNOME,
+  KDE, XFCE, Cinnamon… For headless RPi without a desktop session,
+  prefer the ``mixtape.service`` systemd unit instead.
+- **macOS**: writes a LaunchAgent plist
+  (``~/Library/LaunchAgents/com.cinhil.mixtape.plist``) and ``launchctl
+  load``s it. Auto-starts the daemon at login.
 
-Both write the user's chosen *target command* — usually ``mixtape --tray``
-so the app starts in the background as a system-tray icon.
+The target is ``mixtape-daemon`` — the daemon-and-clients design
+keeps a single long-running daemon; UI shells (TUI / desktop) connect
+to it on demand.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -33,19 +38,20 @@ def _windows_shortcut_path() -> Path:
     return _windows_startup_dir() / "mixtape.lnk"
 
 
-def _windows_enable(launcher_command: str) -> bool:
-    """Create a .lnk shortcut launching ``launcher_command``.
-    ``launcher_command`` should be a single executable path (e.g. ``mixtape``)
-    or ``pwsh.exe`` with appropriate args."""
+def _windows_enable() -> bool:
+    """Create a .lnk shortcut that launches the daemon at user logon.
+    Uses ``pythonw.exe`` so no console window appears."""
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    runner = str(pythonw if pythonw.is_file() else sys.executable)
     try:
-        # Use PowerShell's WScript.Shell to write the shortcut — no extra deps.
         ps_script = (
             f"$WshShell = New-Object -ComObject WScript.Shell;"
             f"$lnk = $WshShell.CreateShortcut('{_windows_shortcut_path()}');"
-            f"$lnk.TargetPath = 'pwsh.exe';"
-            f"$lnk.Arguments = '-WindowStyle Hidden -Command \"& mixtape --tray\"';"
+            f"$lnk.TargetPath = '{runner}';"
+            f"$lnk.Arguments = '-m mixtape.daemon.main';"
             f"$lnk.WorkingDirectory = '{Path.home()}';"
-            f"$lnk.Description = 'mixtape — background sync (tray)';"
+            f"$lnk.WindowStyle = 7;"  # minimized; pythonw has no console anyway
+            f"$lnk.Description = 'mixtape daemon (background sync engine)';"
             f"$lnk.Save();"
         )
         subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
@@ -71,24 +77,23 @@ def _windows_is_enabled() -> bool:
 # ── Linux (XDG autostart) ──────────────────────────────────────────────────
 
 def _linux_autostart_dir() -> Path:
-    import os
     base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return base / "autostart"
 
 
 def _linux_desktop_path() -> Path:
-    return _linux_autostart_dir() / "mixtape.desktop"
+    return _linux_autostart_dir() / "mixtape-daemon.desktop"
 
 
 def _linux_enable() -> bool:
-    """Write a .desktop file that launches ``mixtape --tray`` at session start."""
-    exe = shutil.which("mixtape") or "mixtape"
+    """Write an XDG autostart file that launches the daemon at session start."""
+    exe = shutil.which("mixtape-daemon") or "mixtape-daemon"
     body = (
         "[Desktop Entry]\n"
         "Type=Application\n"
-        "Name=mixtape\n"
-        "Comment=Sync YouTube Music playlists to USB MP3 players\n"
-        f"Exec={exe} --tray\n"
+        "Name=mixtape daemon\n"
+        "Comment=mixtape background sync engine (daemon)\n"
+        f"Exec={exe}\n"
         "X-GNOME-Autostart-enabled=true\n"
         "Terminal=false\n"
         "Categories=AudioVideo;Audio;\n"
@@ -104,6 +109,9 @@ def _linux_enable() -> bool:
 def _linux_disable() -> bool:
     try:
         _linux_desktop_path().unlink(missing_ok=True)
+        # Clean up the legacy mixtape.desktop too if it exists.
+        legacy = _linux_autostart_dir() / "mixtape.desktop"
+        legacy.unlink(missing_ok=True)
         return True
     except OSError:
         return False
@@ -113,16 +121,97 @@ def _linux_is_enabled() -> bool:
     return _linux_desktop_path().exists()
 
 
+# ── macOS (LaunchAgent) ────────────────────────────────────────────────────
+
+LAUNCH_AGENT_LABEL = "com.cinhil.mixtape.daemon"
+
+
+def _macos_agent_dir() -> Path:
+    return Path.home() / "Library" / "LaunchAgents"
+
+
+def _macos_plist_path() -> Path:
+    return _macos_agent_dir() / f"{LAUNCH_AGENT_LABEL}.plist"
+
+
+def _macos_enable() -> bool:
+    """Write a LaunchAgent plist + load it. RunAtLoad means the daemon
+    starts automatically at login; KeepAlive=false means we don't fight
+    the user if they `mixtape-daemon /shutdown` it manually."""
+    exe = shutil.which("mixtape-daemon") or "mixtape-daemon"
+    state_log = Path.home() / "Library" / "Logs" / "mixtape-daemon.log"
+    plist = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0"><dict>\n'
+        f'  <key>Label</key><string>{LAUNCH_AGENT_LABEL}</string>\n'
+        f'  <key>ProgramArguments</key><array><string>{exe}</string></array>\n'
+        '  <key>RunAtLoad</key><true/>\n'
+        '  <key>KeepAlive</key><false/>\n'
+        f'  <key>StandardOutPath</key><string>{state_log}</string>\n'
+        f'  <key>StandardErrorPath</key><string>{state_log}</string>\n'
+        '</dict></plist>\n'
+    )
+    try:
+        _macos_agent_dir().mkdir(parents=True, exist_ok=True)
+        state_log.parent.mkdir(parents=True, exist_ok=True)
+        _macos_plist_path().write_text(plist)
+        # `launchctl bootstrap gui/<uid>` is the modern verb; fall back
+        # to legacy `launchctl load` if not present.
+        uid = os.getuid()  # type: ignore[attr-defined]
+        try:
+            subprocess.run(
+                ["launchctl", "bootstrap", f"gui/{uid}", str(_macos_plist_path())],
+                check=True, timeout=10, capture_output=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            subprocess.run(
+                ["launchctl", "load", "-w", str(_macos_plist_path())],
+                check=False, timeout=10, capture_output=True,
+            )
+        return True
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _macos_disable() -> bool:
+    try:
+        # Best-effort unload; ignore failures.
+        try:
+            uid = os.getuid()  # type: ignore[attr-defined]
+            subprocess.run(
+                ["launchctl", "bootout", f"gui/{uid}/{LAUNCH_AGENT_LABEL}"],
+                check=False, timeout=10, capture_output=True,
+            )
+        except FileNotFoundError:
+            pass
+        _macos_plist_path().unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
+
+
+def _macos_is_enabled() -> bool:
+    return _macos_plist_path().exists()
+
+
 # ── Public API ─────────────────────────────────────────────────────────────
 
 def is_supported() -> bool:
     """Whether autostart can be configured on this platform via this module."""
-    return sys.platform == "win32" or sys.platform.startswith("linux")
+    return (
+        sys.platform == "win32"
+        or sys.platform == "darwin"
+        or sys.platform.startswith("linux")
+    )
 
 
 def is_enabled() -> bool:
     if sys.platform == "win32":
         return _windows_is_enabled()
+    if sys.platform == "darwin":
+        return _macos_is_enabled()
     if sys.platform.startswith("linux"):
         return _linux_is_enabled()
     return False
@@ -130,7 +219,9 @@ def is_enabled() -> bool:
 
 def enable() -> bool:
     if sys.platform == "win32":
-        return _windows_enable("mixtape --tray")
+        return _windows_enable()
+    if sys.platform == "darwin":
+        return _macos_enable()
     if sys.platform.startswith("linux"):
         return _linux_enable()
     return False
@@ -139,6 +230,8 @@ def enable() -> bool:
 def disable() -> bool:
     if sys.platform == "win32":
         return _windows_disable()
+    if sys.platform == "darwin":
+        return _macos_disable()
     if sys.platform.startswith("linux"):
         return _linux_disable()
     return False
