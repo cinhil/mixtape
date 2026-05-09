@@ -1,11 +1,12 @@
 # mixtape
 
-> ⚠️ **Beta — `0.1.0b1`** · works on the author's setup but lightly tested.
-> Expect rough edges, please file issues.
+> ⚠️ **Beta — `0.1.0b2`** · daemon-and-clients architecture; expect
+> rough edges, please file issues.
 
-> Mixtapes for the streaming era — a **headless** USB-driven sync engine
-> for curated YouTube Music playlists, with a small TUI for the moments you
-> actually need to touch it.
+> Mixtapes for the streaming era — a **headless background daemon**
+> that syncs curated YouTube Music playlists onto USB MP3 players,
+> with thin clients (terminal TUI for SSH/RPi, native Qt UI for
+> Windows / macOS) when you actually need to touch it.
 
 ## Why this exists
 
@@ -20,44 +21,49 @@ hi-fi. Curate your playlists once, plug a device, walk away.
 
 Plug a registered device → it's auto-detected by its `.mixtape` marker,
 synced (with per-playlist audio format), the filesystem is flushed, and you
-get a "safe to unplug" notification. Designed to run **fully unattended** as
-a systemd service on a Raspberry Pi.
+get a "safe to unplug" notification. Designed to run **fully unattended**
+under systemd (Linux/RPi), launchd (macOS) or the user Startup folder
+(Windows).
 
-Cross-platform (Linux · Windows). Python + Textual + yt-dlp + Deno.
+Cross-platform: **Linux · Windows · macOS**. Python + FastAPI daemon +
+Textual TUI + optional PySide6 desktop UI + yt-dlp + Deno.
 
-## Daily use is headless — the TUI is just for setup
+## Architecture
 
-The point of mixtape is to make the screen disappear. The "happy path"
-runs **without UI at all**:
+```
+┌────────────────────────────────────────────────────────────┐
+│  mixtape-daemon (always running)                           │
+│  Python + asyncio + FastAPI on 127.0.0.1:<ephemeral>       │
+│                                                            │
+│   services/  SyncService · LibraryService · WatcherService │
+│              CookieService · BgutilService · UpdateService │
+│   api.json   port + bearer token (chmod 600)               │
+└────────────────────────────────────────────────────────────┘
+            ▲                          ▲
+            │  HTTP + WebSocket        │
+   ┌────────┴───────┐         ┌────────┴────────────┐
+   │ Textual TUI    │         │ PySide6 + Qt tray   │
+   │ Linux server,  │         │ Windows + macOS     │
+   │ Linux desktop, │         │                     │
+   │ RPi via SSH    │         │ window + native     │
+   │                │         │ system-tray icon /  │
+   │ default `mix-  │         │ macOS menu bar.     │
+   │ tape` command  │         │ `mixtape --desktop` │
+   └────────────────┘         └─────────────────────┘
+```
 
-- **Raspberry Pi / Linux server**: `mixtape --headless`, typically as a
-  `systemd --user` service that auto-starts at boot and watches for USB
-  plug events.
-- **PC / laptop**: `mixtape --tray`, a small system-tray icon doing the
-  same thing in the background. Toggle it from the Settings modal; flip
-  *Close window to system tray* on so quitting the TUI doesn't stop the
-  watcher.
+The daemon is the brain, every client is replaceable. UIs hold no
+domain state — they fetch state via REST and subscribe to a WebSocket
+event stream for live updates (sync progress, USB plug events, cookie
+expiry).
 
-Both modes auto-detect known devices, sync them, and flush the filesystem
-before signalling that it's safe to unplug. After the initial setup you
-can forget mixtape exists — plug a stick, walk away, take the stick.
-
-**The TUI is intentionally not the main interface.** It's the setup +
-maintenance surface, used for the few things that genuinely need a human:
+**Daily use is headless.** The clients are for the moments you genuinely
+need a human:
 
 - registering a new library / device,
 - adding or editing playlists,
 - refreshing expired cookies (≈ once a month),
 - browsing the sync log when something looks off.
-
-We picked a TUI rather than a desktop GUI because:
-
-- **It works over SSH** — exactly what you want for a headless RPi you
-  only ever reach through a terminal.
-- **It works the same everywhere** — Linux, Windows, WSL, a console-only
-  Pi — without dragging in a desktop environment, Electron, or Qt.
-- **It's tiny** — Textual plus a handful of pure-Python deps; the runtime
-  footprint is dominated by yt-dlp and Deno, not by the UI.
 
 For remote setups you can do everything over SSH:
 `ssh pi@rpi 'mixtape'` opens the TUI inside your terminal session,
@@ -102,19 +108,34 @@ A **single command** in your terminal — no manual download needed.
 ### Linux / Raspberry Pi
 
 ```bash
+# Just install (TUI usable immediately; daemon spawns on first launch)
 curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash
+
+# Recommended: also install a systemd --user unit so the daemon runs at boot
+curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash -s -- --systemd
 ```
 
-For an unattended auto-sync setup (RPi as a service):
+### macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash -s -- --systemd
+# Homebrew is required (https://brew.sh)
+curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash
+
+# Recommended: also install a LaunchAgent so the daemon runs at login
+curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash -s -- --launchd
+
+# Add the desktop GUI (PySide6 + Qt; ~60 MB)
+curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash -s -- --launchd --desktop
 ```
 
 ### Windows
 
 ```powershell
+# TUI + daemon at logon (default)
 irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1 | iex
+
+# Add the desktop GUI (PySide6 + Qt)
+iex "& {$(irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1)} -Desktop"
 ```
 
 (Detailed step-by-step with troubleshooting:
@@ -122,21 +143,41 @@ irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1 | iex
 
 ### What the installer does
 
-1. Installs prerequisites — `ffmpeg`, `git`, `python`, `uv`, `deno` — via your
-   platform's package manager (`apt` / `winget`, user-local where possible)
-2. Clones the project to `~/.local/share/mixtape-app` (Linux) or
-   `%LOCALAPPDATA%\Programs\mixtape` (Windows)
-3. Sets up the optional bgutil companion
-4. Linux: optionally enables a `systemd --user` service ; Windows: creates a
-   desktop shortcut
+1. Installs prerequisites — `ffmpeg`, `git`, `python`, `uv`, `deno` —
+   via your platform's package manager (`apt` on Linux, `brew` on
+   macOS, `winget` on Windows; user-local where possible).
+2. Clones the project to `~/.local/share/mixtape-app` (Linux/macOS) or
+   `%LOCALAPPDATA%\Programs\mixtape` (Windows).
+3. Sets up the optional bgutil companion.
+4. Installs Python deps via `uv sync`. With `--desktop` (Linux/macOS) or
+   `-Desktop` (Windows), also pulls PySide6 + qasync for the GUI.
+5. Optionally installs a service to run the **daemon** at boot/login:
+   - Linux:   `--systemd`  → user systemd unit
+   - macOS:   `--launchd`  → LaunchAgent in `~/Library/LaunchAgents/`
+   - Windows: default      → `Startup\mixtape-daemon.lnk` (skip with `-NoAutostart`)
+6. On update, restarts the running daemon so it picks up the new code.
 
-Override the install location with the `MIXTAPE_DIR` env var.
-Re-run any time to update — it just `git pull`s.
+Override the install location with `MIXTAPE_DIR=...` (Linux/macOS) or
+`$env:MIXTAPE_DIR` (Windows). Re-run any time to update — idempotent.
 
-### After install — launch the TUI
+### After install
 
-- **Windows**: double-click the *mixtape* shortcut on your desktop
-- **Linux**: `cd ~/.local/share/mixtape-app && ./run.sh`
+- **TUI** (any platform):
+  ```
+  mixtape           # connects to daemon (auto-spawns one if needed)
+  ```
+- **Desktop GUI** (Windows / macOS / Linux desktop, requires `--desktop`):
+  ```
+  mixtape --desktop
+  ```
+- **Run daemon manually**:
+  ```
+  mixtape-daemon    # foreground; for systemd Type=simple / launchd
+  ```
+
+The daemon writes `state/api.json` (port + bearer token, `chmod 600`)
+when it starts; clients read this to connect. Nothing else is needed
+to bridge them.
 
 ### Updates
 
@@ -207,63 +248,58 @@ journalctl --user -u mixtape -f
 ```
 
 In the TUI:
-- `c` paste cookies (use a browser extension like *Get cookies.txt LOCALLY*)
-- `a` add a playlist (paste URL → title auto-fetched)
-- `l` manage libraries (the PC default is created automatically; press `u` to register a USB device)
+- `c` refresh cookies (paste via `mixtape --set-cookies` from your laptop)
 - `s` sync the selected playlist · `S` sync all
+- `r` reload state from the daemon
+- `u` re-check for updates · `q` quit (the daemon stays running)
 
-## Background mode — system tray
+## Background mode — Qt window + native tray
 
-For a "set and forget" experience on a desktop machine (Windows or Linux
-with a desktop environment), run mixtape as a tray icon instead of a TUI:
+For a "set and forget" experience on a desktop machine (Windows / macOS /
+Linux desktop with a system tray), use the optional PySide6 GUI:
 
 ```bash
-mixtape --tray
+# After installing with --desktop / -Desktop
+mixtape --desktop
 ```
 
-The icon sits in the notification area; right-click for: *Open TUI* ·
-*Sync all now* · *Pause auto-sync* · *Show last sync log* · *Quit*. USB
-plug events still trigger an auto-sync without you doing anything.
+A real Qt window with a playlist table, a status bar (cookies / bgutil
+/ library / update), action buttons (Sync selected, Sync all, Refresh
+cookies, Check update), and a live event log fed by the daemon's
+WebSocket stream. The system-tray icon (or macOS menu-bar item — Qt
+maps `QSystemTrayIcon` to NSStatusItem automatically) stays present
+when the window is hidden:
 
-In the TUI press **`o`** (settings) to manage it without leaving the
-keyboard. The Options panel has three checkboxes:
+- **Click the tray icon** → show the window.
+- **Close the window** → with *Close to tray* enabled, the window
+  hides and the daemon keeps running. Without it, the window closes
+  but the daemon still runs (it's a separate process now).
+- **Tray menu → Quit** → also stops the daemon.
 
-- **Start mixtape at login** — drops a launcher in the OS startup folder
-  so the tray runs from boot. (Windows: a `.lnk` in the Startup folder;
-  Linux desktop: a `.desktop` in `~/.config/autostart/`.)
-- **Close window to system tray** — when on, pressing `q` / Ctrl+C
-  spawns the tray and exits the TUI; the watcher keeps running in the
-  background. When off, quitting the TUI fully exits.
-- **Tray running** — live toggle that spawns or stops the tray daemon
-  right now. The label reflects current state (`(active)` /
-  `(stopped)`).
-
-A PID file under `state/tray.pid` keeps track of the running daemon, so
-toggling *Tray running* off cleanly stops it and a second `mixtape
---tray` invocation refuses to start a duplicate.
+The whole UI is one process (Qt + qasync — no IPC trickery, no PID-file
+ceremony), and the daemon is a separate long-running process — so
+shutting the GUI does not kill the watcher.
 
 ## Headless / Raspberry Pi
 
-For a server-style RPi without a desktop, use `--headless` instead of
-`--tray` (no GUI dependency):
+The daemon is the headless service. Run it as a `systemd --user` unit;
+the install script handles this for you when you pass `--systemd`:
 
 ```bash
-uv run mixtape --headless
+curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash -s -- --systemd
+journalctl --user -u mixtape -f          # follow logs
+systemctl --user restart mixtape         # apply config changes
 ```
 
-Or as a systemd user service (auto-starts at boot, watches USB plug events):
+The unit runs `mixtape-daemon` (`Type=simple`, restart-on-failure). It
+watches for USB volumes; when one matches a registered library's
+`.mixtape` marker UUID it switches the active library and auto-syncs
+— only if cookies are still valid. Otherwise the sync is skipped and a
+clear log line is emitted.
 
-```bash
-cp mixtape.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now mixtape.service
-journalctl --user -u mixtape.service -f
-```
-
-The service watches for USB volumes; when one matches a registered library's
-label, it switches the active library and runs an auto-sync — only if cookies
-are still valid. Otherwise the sync is skipped and a clear log line is
-emitted.
+SSH into the Pi and `mixtape` opens the TUI in your terminal session;
+all actions go through the daemon's local API, so you see live state
++ progress over the same SSH session.
 
 ## How it works
 
@@ -318,27 +354,32 @@ What this enables:
 - Multiple devices side-by-side: each one has its own UUID and its own
   playlist set; mixtape switches the *active* library on plug-in.
 
-## TUI key bindings (main screen)
+## TUI key bindings
 
 | Key | Action |
 |-----|--------|
-| `a` / `e` / `d` | Add / edit / delete playlist |
 | `s` / `S` | Sync selected / Sync all |
-| `c` | Paste or update cookies |
-| `i` | Import all your YouTube playlists in one go (cookies required) |
-| `l` | Open the libraries screen |
-| `o` | Open settings (auto-start, close-to-tray, tray running) |
-| `u` | Open the update modal (also reachable by clicking the banner) |
-| `q` | Quit (or close to tray, depending on the setting) |
+| `c` | Refresh cookies (status check) |
+| `u` | Re-check for updates |
+| `r` | Reload state from the daemon |
+| `q` | Quit (the daemon stays running) |
+
+Add / edit / delete playlist forms are coming back in the next pass —
+the daemon already exposes `LibraryService` REST endpoints; the screens
+are a port, not a rewrite.
 
 ## System dependencies
 
-- `ffmpeg` — audio re-encoding and tag/thumbnail embedding
-- `deno` — JavaScript runtime, used by yt-dlp to solve YouTube's player
-  challenges since 2024
-- (optional) `git` for `setup-bgutil.sh`
+- `ffmpeg` — audio re-encoding and tag/thumbnail embedding (apt /
+  brew / winget)
+- `deno` — JavaScript runtime used by the bgutil-ytdlp-pot-provider
+  companion (installed user-local under `~/.deno/bin` on
+  Linux/macOS, via winget on Windows)
+- `git` — for `setup-bgutil.sh` and update pulls
 
-Linux: `sudo apt install ffmpeg && curl -fsSL https://deno.land/install.sh | sh`
+Linux:   `sudo apt install ffmpeg git && curl -fsSL https://deno.land/install.sh | sh`
+macOS:   `brew install ffmpeg git deno`
+Windows: `winget install Gyan.FFmpeg Git.Git DenoLand.Deno` (or run install.ps1)
 
 ## Optional companion (`bgutil-ytdlp-pot-provider`)
 
@@ -356,16 +397,41 @@ cleanly when the app exits.
 
 ## Storage
 
-All state lives in standard XDG locations. You shouldn't need to touch any of
-these — the TUI manages everything.
+All state lives in standard XDG locations on Linux/macOS and the
+matching `%APPDATA%` / `%LOCALAPPDATA%` dirs on Windows. The daemon is
+the only writer; clients connect over HTTP and don't poke at these
+files directly.
 
 | Path | Contents |
 |------|----------|
-| `~/.config/mixtape/` (Linux) · `%APPDATA%\mixtape\` (Windows) | `config.yaml`, `cookies.txt` |
-| `~/.local/share/mixtape/` (Linux) · `%LOCALAPPDATA%\mixtape\` (Windows) | `bgutil-server/` companion |
-| `~/.local/state/mixtape/` (Linux) · `%LOCALAPPDATA%\mixtape\state\` (Windows) | `bgutil-server.log` |
+| `~/.config/mixtape/` (Linux/macOS) · `%APPDATA%\mixtape\` (Windows) | `config.yaml`, `cookies.txt` |
+| `~/.local/share/mixtape/` (Linux/macOS) · `%LOCALAPPDATA%\mixtape\` (Windows) | `bgutil-server/` companion |
+| `~/.local/state/mixtape/` (Linux/macOS) · `%LOCALAPPDATA%\mixtape\state\` (Windows) | `api.json` (daemon discovery), `bgutil-server.log` |
+| `~/Library/Logs/mixtape-daemon.log` (macOS only) | LaunchAgent stdout/stderr |
 | `<library>/sync.log` | Per-library sync history |
 | `<library>/<playlist>/.archive` · `.manifest.yaml` | Per-playlist sync state |
+
+## Local API
+
+The daemon exposes a small REST + WebSocket API on `127.0.0.1:<ephemeral>`,
+authenticated with a 256-bit bearer token written to
+`state/api.json` (`chmod 600`). Both port and token are minted fresh
+at every daemon start.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET`  | `/status` | bgutil / cookies / sync / update snapshot |
+| `GET`  | `/libraries` | active library + list + close-to-tray flag |
+| `GET`  | `/playlists` | playlists in the active library |
+| `POST` | `/sync` | start a sync (body: `{library?, playlists?}`) |
+| `POST` | `/sync/cancel` | request mid-sync cancellation |
+| `POST` | `/cookies/refresh` | force a cookie revalidation |
+| `POST` | `/update/refresh` · `/update/apply` | check / apply mixtape update |
+| `POST` | `/shutdown` | stop the daemon |
+| `WS`   | `/events` | live event stream (sync.*, library.*, …) |
+
+OpenAPI docs are live at `http://<host>:<port>/docs` while the daemon
+runs.
 
 ## License
 
