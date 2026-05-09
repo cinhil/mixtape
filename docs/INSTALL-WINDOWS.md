@@ -6,6 +6,22 @@ The full install takes about 10 minutes the first time.
 > If anything below fails, jump to [Troubleshooting](#troubleshooting) at the
 > bottom — common issues are all listed there.
 
+## TL;DR — one-liner
+
+Open **PowerShell** and paste:
+
+```powershell
+irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1 | iex
+```
+
+This installs the prerequisites, clones the project to
+`%LOCALAPPDATA%\Programs\mixtape\`, sets up the bgutil companion, and creates
+a desktop shortcut. Skip to [§5 First launch](#5-first-launch) once it
+finishes.
+
+The detailed walkthrough below is for users who prefer to see each step or
+who hit issues with the one-liner.
+
 ---
 
 ## 1. Install the prerequisites

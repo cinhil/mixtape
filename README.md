@@ -44,42 +44,48 @@ entirely local.
 - **Safe-unplug flush** — `os.sync()` after every sync run, plus a notification once the data is physically on disk.
 - **Headless / RPi mode** — `mixtape --headless`, suitable for a systemd user service.
 
-## Quick start
+## Install
+
+A **single command** in your terminal — no manual download needed.
 
 ### Linux / Raspberry Pi
 
 ```bash
-sudo apt install ffmpeg git
-curl -fsSL https://deno.land/install.sh | sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone git@github.com:cinhil/mixtape.git && cd mixtape
-uv sync
-./setup-bgutil.sh
-./run.sh
+curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash
+```
+
+For an unattended auto-sync setup (RPi as a service):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash -s -- --systemd
 ```
 
 ### Windows
 
-> Detailed step-by-step guide with troubleshooting:
-> **[docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md)**
-
-Short version:
-
 ```powershell
-# Prerequisites (one-time, via winget)
-winget install --id Python.Python.3.12 -e
-winget install --id astral-sh.uv -e
-winget install --id Gyan.FFmpeg -e
-winget install --id DenoLand.Deno -e
-winget install --id Git.Git -e
-# (open a fresh terminal so the new PATH entries are picked up)
-
-git clone https://github.com/cinhil/mixtape.git
-cd mixtape
-uv sync
-.\setup-bgutil.ps1
-.\run.ps1
+irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1 | iex
 ```
+
+(Detailed step-by-step with troubleshooting:
+**[docs/INSTALL-WINDOWS.md](docs/INSTALL-WINDOWS.md)**)
+
+### What the installer does
+
+1. Installs prerequisites — `ffmpeg`, `git`, `python`, `uv`, `deno` — via your
+   platform's package manager (`apt` / `winget`, user-local where possible)
+2. Clones the project to `~/.local/share/mixtape-app` (Linux) or
+   `%LOCALAPPDATA%\Programs\mixtape` (Windows)
+3. Sets up the optional bgutil companion
+4. Linux: optionally enables a `systemd --user` service ; Windows: creates a
+   desktop shortcut
+
+Override the install location with the `MIXTAPE_DIR` env var.
+Re-run any time to update — it just `git pull`s.
+
+### After install — launch the TUI
+
+- **Windows**: double-click the *mixtape* shortcut on your desktop
+- **Linux**: `cd ~/.local/share/mixtape-app && ./run.sh`
 
 In the TUI:
 - `c` paste cookies (use a browser extension like *Get cookies.txt LOCALLY*)
