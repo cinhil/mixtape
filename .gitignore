@@ -28,3 +28,5 @@ poc/                          # exploratory work, kept off-tree
 cookies.txt
 config.yaml
 sync.log
+Gemini_Generated_Image_*
+variant_*.png
