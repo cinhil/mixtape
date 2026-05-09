@@ -8,23 +8,25 @@ instead of the stock ``textual.widgets.Checkbox``.
 """
 from __future__ import annotations
 
+from textual.content import Content
+from textual.style import Style
 from textual.widgets import Checkbox as _Checkbox
 
 
 class Checkbox(_Checkbox):
-    """A clearer checkbox: ``[ ]`` when off, ``[✓]`` when on, with a strong
+    """A clearer checkbox: ``[ ]`` when off, ``[✓]`` when on, with strong
     colour contrast so the toggle state is obvious at a glance.
 
     The stock Textual checkbox shows ``▐X▌`` and relies on a subtle colour
     change to convey state, which doesn't read as a toggle on most themes.
-    We swap the inner glyph based on value, give the ``[ ]`` frame a panel
-    background to set it apart from labels, and tint the whole control
-    when toggled on.
+    We render the bracketed frame ourselves (overriding the ``_button``
+    property) so the inner glyph reflects ``self.value`` directly at every
+    render — no reactive race between ``__init__`` and the first paint.
     """
 
     BUTTON_LEFT = "["
     BUTTON_RIGHT = "]"
-    BUTTON_INNER = " "  # default; swapped to "✓" by _sync_inner below
+    BUTTON_INNER = "✓"  # used only as a fallback; real glyph computed below
 
     DEFAULT_CSS = """
     Checkbox {
@@ -54,14 +56,25 @@ class Checkbox(_Checkbox):
     }
     """
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._sync_inner()
+    @property
+    def _button(self) -> Content:  # type: ignore[override]
+        button_style = self.get_visual_style("toggle--button")
+        # Paint the [ ] frame in the *label* color so the brackets stay
+        # visible against the dialog surface — the parent class would put
+        # them in button_style.background, which blends into the button
+        # background we just gave it.
+        label_style = self.get_visual_style("toggle--label")
+        side_style = Style(
+            foreground=label_style.foreground,
+            background=self.background_colors[1],
+        )
+        inner = "✓" if self.value else " "
+        return Content.assemble(
+            (self.BUTTON_LEFT, side_style),
+            (inner, button_style),
+            (self.BUTTON_RIGHT, side_style),
+        )
 
     def watch_value(self) -> None:
-        # Textual ToggleButton's reactive `value` triggers this when toggled.
-        self._sync_inner()
-
-    def _sync_inner(self) -> None:
-        self.BUTTON_INNER = "✓" if self.value else " "
+        # Force a re-render so the inner glyph flips immediately on toggle.
         self.refresh()
