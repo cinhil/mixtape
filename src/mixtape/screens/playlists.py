@@ -261,7 +261,12 @@ class PlaylistsScreen(Screen):
             targets = anonymous
 
         def cb(_):
+            # The active library can change mid-sync (USB unplug → fallback),
+            # so reload it from the app — playlist table + status bar both
+            # depend on it.
+            self.config = self.app.config  # type: ignore[attr-defined]
             self._refresh_table()
+            self._refresh_status()
             try:
                 self.app.recheck_cookies()  # type: ignore[attr-defined]
             except AttributeError:

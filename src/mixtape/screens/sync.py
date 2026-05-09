@@ -97,13 +97,13 @@ class SyncScreen(ModalScreen[bool]):
     @work(thread=True, exclusive=True)
     def _run_all(self) -> None:
         library = self.config.active_library_obj()
-        for ui_idx, (cfg_idx, pl) in enumerate(self.targets):
+        for ui_idx, (_cfg_idx, pl) in enumerate(self.targets):
             if self._cancel.is_set():
                 self.app.call_from_thread(self._log, f"[yellow]Skipped[/yellow] {pl.name} (cancelled)")
                 continue
             try:
                 count = sync_playlist(pl, library, ui_idx, self._post, cancel=self._cancel)
-                self.app.call_from_thread(self._mark_done, cfg_idx, count)
+                self.app.call_from_thread(self._mark_done, pl, count)
             except Exception as e:  # noqa: BLE001
                 self.app.call_from_thread(self._log, f"[red]ERROR[/red] {pl.name}: {e}")
         # Flush kernel buffers so the device is physically up-to-date — safe to
@@ -204,8 +204,8 @@ class SyncScreen(ModalScreen[bool]):
             timeout=10,
         )
 
-    def _mark_done(self, cfg_idx: int, count: int) -> None:
-        self.config.mark_synced(cfg_idx, count)
+    def _mark_done(self, playlist: Playlist, count: int) -> None:
+        self.config.mark_synced(playlist, count)
 
     def _all_done(self) -> None:
         self._done = True
@@ -262,6 +262,17 @@ class SyncScreen(ModalScreen[bool]):
             self.dismiss(True)
         else:
             self.action_cancel()
+
+    def force_close(self) -> None:
+        """Close the modal immediately without waiting for graceful cancel.
+        Used when the active library's device is yanked mid-sync — the worker
+        will fail on the next file write anyway, so there's no point keeping
+        the dialog open."""
+        self._cancel.set()
+        try:
+            self.dismiss(False)
+        except Exception:
+            pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":

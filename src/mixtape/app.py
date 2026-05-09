@@ -11,6 +11,7 @@ from .cookies_check import CookieStatus, get_cookie_status, invalidate_cache as 
 from .library_marker import find_marker_on_volume
 from .platform_io import VolumeChange, VolumeWatcher, platform_name, reconcile_library_path
 from .screens.playlists import PlaylistsScreen
+from .screens.sync import SyncScreen
 from .update_check import UpdateStatus, get_update_status
 
 
@@ -80,6 +81,12 @@ class MixtapeApp(App):
                 self.call_from_thread(
                     self._notify_unknown_device, vol.label or vol.identifier, vol.identifier,
                 )
+        if change.removed:
+            # We don't track which volume identifier was tied to which library,
+            # so we don't need the identifiers here — _on_volume_removed checks
+            # the active library's `online` property to decide whether the
+            # disappearance affects us.
+            self.call_from_thread(self._on_volume_removed)
 
     def _on_known_device_plugged(self, library_name: str, identifier: str, new_path: str) -> None:
         lib = self.config.get_library(library_name)
@@ -111,6 +118,49 @@ class MixtapeApp(App):
                 if isinstance(s, PlaylistsScreen):
                     s.action_sync_all()
                     break
+
+    def _on_volume_removed(self) -> None:
+        """A removable volume disappeared. If it was the active library,
+        cancel any in-flight sync, switch to a still-online library, and
+        repaint whatever screen is currently displayed."""
+        active = self.config.active_library_obj()
+        if active.online:
+            return  # active library still accessible — nothing to do
+        # Cancel + close any open SyncScreen for the (now-gone) device.
+        for screen in list(self.screen_stack):
+            if isinstance(screen, SyncScreen):
+                screen.force_close()
+                break
+        # Pick a fallback: prefer libraries that are online; if none are,
+        # keep whatever the first library is (so the app stays usable
+        # offline) — that's typically the local "PC" entry.
+        fallback = next(
+            (lib for lib in self.config.libraries if lib.online and lib.name != active.name),
+            None,
+        )
+        if fallback is None and self.config.libraries:
+            fallback = self.config.libraries[0]
+        if fallback and fallback.name != self.config.active_library:
+            self.config.set_active_library(fallback.name)
+            self.config.save()
+            self.notify(
+                f"📤 '{active.name}' unplugged — switched to '{fallback.name}'.",
+                severity="warning", timeout=8,
+            )
+        else:
+            self.notify(
+                f"📤 '{active.name}' unplugged.",
+                severity="warning", timeout=6,
+            )
+        # Refresh whatever screens expose a `_refresh_status` / `_refresh_table`.
+        for screen in self.screen_stack:
+            for fn in ("_refresh_table", "_refresh_status"):
+                refresh = getattr(screen, fn, None)
+                if callable(refresh):
+                    try:
+                        refresh()
+                    except Exception:
+                        pass
 
     def _notify_unknown_device(self, label: str, identifier: str) -> None:
         self.notify(
