@@ -110,11 +110,12 @@ curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | ba
 
 ```powershell
 # Windows
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1))) -Dev
+iex "& {$(irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1)} -Dev"
 ```
 
 You can also pin to a specific version with `--ref=vX.Y.Z` (Linux) or
-`-Ref vX.Y.Z` (Windows).
+`-Ref vX.Y.Z` (Windows, e.g.
+`iex "& {$(irm …/install.ps1)} -Ref v0.1.0b1"`).
 
 See [docs/RELEASING.md](docs/RELEASING.md) for the maintainer-side release
 process (tagging, GitHub Actions, etc.).
