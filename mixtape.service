@@ -1,0 +1,29 @@
+# systemd unit for mixtape in headless / daemon mode.
+#
+# Install (run as the same user that owns the project + cookies):
+#   $ cp mixtape.service ~/.config/systemd/user/
+#   $ systemctl --user daemon-reload
+#   $ systemctl --user enable --now mixtape.service
+#
+# Logs:
+#   $ journalctl --user -u mixtape.service -f
+#
+# Edit ExecStart below if your project lives elsewhere or you use a different
+# Deno path. The Environment lines ensure deno is on PATH when systemd starts
+# the service from outside an interactive shell.
+
+[Unit]
+Description=mixtape — auto-sync YouTube Music playlists when a registered USB drive appears
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Sandbox/private/yt-dlp
+Environment="PATH=%h/.deno/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/env uv run mixtape --headless
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

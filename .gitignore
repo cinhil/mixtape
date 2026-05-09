@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Project-local artifacts (don't commit) — none of these belong in the repo:
+poc/                          # exploratory work, kept off-tree
+*.log
+.coverage
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Sensitive — even if absent here, never commit cookies or local config:
+cookies.txt
+config.yaml
+sync.log

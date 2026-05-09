@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+import threading
+
+from textual.app import App
+
+from .bgutil_server import BgutilServer
+from .config import Config
+from .cookies_check import CookieStatus, get_cookie_status, invalidate_cache as invalidate_cookie_cache
+from .platform_io import VolumeChange, VolumeWatcher, platform_name, reconcile_library_path
+from .screens.playlists import PlaylistsScreen
+
+
+class MixtapeApp(App):
+    """A small Textual app to manage and sync YouTube Music playlists."""
+
+    CSS = """
+    Screen { background: $background; }
+    """
+
+    TITLE = "mixtape (beta)"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.config = Config.load()
+        self.bgutil = BgutilServer()
+        self.bgutil_status: tuple[str, str] = ("pending", "")
+        self.cookie_status: CookieStatus = CookieStatus(state="unknown", message="checking…")
+        self.usb = VolumeWatcher(self._on_volume_change)
+        self.platform = platform_name()
+
+    def on_mount(self) -> None:
+        ok, msg = self.bgutil.start()
+        self.bgutil_status = ("ok" if ok else "fail", msg)
+        threading.Thread(target=self._refresh_cookie_status, daemon=True, name="cookie-check").start()
+        self.usb.start()
+        self.push_screen(PlaylistsScreen(self.config))
+
+    def on_unmount(self) -> None:
+        self.usb.stop()
+        self.bgutil.stop()
+
+    # --- USB device handling ---
+
+    def _on_volume_change(self, change: VolumeChange) -> None:
+        for vol in change.added:
+            matching = next(
+                (lib for lib in self.config.libraries
+                 if lib.volume_name and lib.volume_name == vol.label),
+                None,
+            )
+            if matching:
+                # Drive letters / device nodes can change across re-plugs; we
+                # match by the (stable) volume label, then refresh the path to
+                # wherever it lives now (preserves the user-chosen sub-folder).
+                new_path = reconcile_library_path(matching.path, vol)
+                self.call_from_thread(
+                    self._on_known_device_plugged, matching.name, vol.identifier, new_path,
+                )
+            else:
+                self.call_from_thread(
+                    self._notify_unknown_device, vol.label or vol.identifier, vol.identifier,
+                )
+
+    def _on_known_device_plugged(self, library_name: str, identifier: str, new_path: str) -> None:
+        lib = self.config.get_library(library_name)
+        path_changed = lib is not None and lib.path != new_path
+        if path_changed and lib is not None:
+            lib.path = new_path
+            self.config.save()
+        suffix = f" (path moved → {new_path})" if path_changed else ""
+        self.notify(
+            f"📀 Device '{library_name}' ({identifier}) detected — switching active library.{suffix}",
+            severity="information", timeout=8,
+        )
+        self.config.set_active_library(library_name)
+        # Refresh PlaylistsScreen if visible
+        for s in self.screen_stack:
+            if isinstance(s, PlaylistsScreen):
+                s.config = self.config
+                try:
+                    s._refresh_table()
+                    s._refresh_status()
+                except Exception:
+                    pass
+        # Auto-sync if the library opted in and cookies are valid
+        lib = self.config.get_library(library_name)
+        if lib and lib.auto_sync and self.cookie_status.ok and self.config.playlists:
+            self.notify("Auto-syncing all playlists to this device…", severity="information")
+            for s in self.screen_stack:
+                if isinstance(s, PlaylistsScreen):
+                    s.action_sync_all()
+                    break
+
+    def _notify_unknown_device(self, label: str, identifier: str) -> None:
+        self.notify(
+            f"🔌 New drive detected: {identifier} ('{label}'). Press 'l' → 'u' to register it as a library.",
+            severity="information", timeout=10,
+        )
+
+    # --- Cookie status ---
+
+    def _refresh_cookie_status(self, force: bool = False) -> None:
+        if force:
+            invalidate_cookie_cache()
+        status = get_cookie_status(force=force)
+        self.call_from_thread(self._on_cookie_status, status)
+
+    def _on_cookie_status(self, status: CookieStatus) -> None:
+        self.cookie_status = status
+        for s in self.screen_stack:
+            if isinstance(s, PlaylistsScreen):
+                try:
+                    s._refresh_status()
+                except Exception:
+                    pass
+
+    def recheck_cookies(self) -> None:
+        """Public hook — call after the user pastes new cookies."""
+        threading.Thread(
+            target=self._refresh_cookie_status,
+            args=(True,), daemon=True, name="cookie-recheck",
+        ).start()
+
+
+def main() -> None:
+    import sys
+    if "--headless" in sys.argv or "-H" in sys.argv:
+        from .headless import run_headless
+        sys.exit(run_headless())
+    app = MixtapeApp()
+    try:
+        app.run()
+    finally:
+        # Defensive: stop daemon even if Textual exits abnormally.
+        app.bgutil.stop()
+
+
+if __name__ == "__main__":
+    main()
