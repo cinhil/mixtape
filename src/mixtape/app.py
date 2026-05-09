@@ -9,6 +9,7 @@ from .config import Config
 from .cookies_check import CookieStatus, get_cookie_status, invalidate_cache as invalidate_cookie_cache
 from .platform_io import VolumeChange, VolumeWatcher, platform_name, reconcile_library_path
 from .screens.playlists import PlaylistsScreen
+from .update_check import UpdateStatus, get_update_status
 
 
 class MixtapeApp(App):
@@ -26,6 +27,7 @@ class MixtapeApp(App):
         self.bgutil = BgutilServer()
         self.bgutil_status: tuple[str, str] = ("pending", "")
         self.cookie_status: CookieStatus = CookieStatus(state="unknown", message="checking…")
+        self.update_status: UpdateStatus | None = None
         self.usb = VolumeWatcher(self._on_volume_change)
         self.platform = platform_name()
 
@@ -33,6 +35,7 @@ class MixtapeApp(App):
         ok, msg = self.bgutil.start()
         self.bgutil_status = ("ok" if ok else "fail", msg)
         threading.Thread(target=self._refresh_cookie_status, daemon=True, name="cookie-check").start()
+        threading.Thread(target=self._refresh_update_status, daemon=True, name="update-check").start()
         self.usb.start()
         self.push_screen(PlaylistsScreen(self.config))
 
@@ -121,6 +124,21 @@ class MixtapeApp(App):
             target=self._refresh_cookie_status,
             args=(True,), daemon=True, name="cookie-recheck",
         ).start()
+
+    # --- Update status ---
+
+    def _refresh_update_status(self) -> None:
+        status = get_update_status()
+        self.call_from_thread(self._on_update_status, status)
+
+    def _on_update_status(self, status: UpdateStatus | None) -> None:
+        self.update_status = status
+        for s in self.screen_stack:
+            if isinstance(s, PlaylistsScreen):
+                try:
+                    s._refresh_status()
+                except Exception:
+                    pass
 
 
 def main() -> None:
