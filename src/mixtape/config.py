@@ -129,6 +129,10 @@ class Config:
     defaults: Defaults = field(default_factory=Defaults)
     active_library: str = "PC"
     libraries: list[Library] = field(default_factory=list)
+    # When True, closing the TUI window spawns the system-tray daemon (so
+    # USB plug/sync still works in the background). When False, closing
+    # the window exits the app outright.
+    close_to_tray: bool = False
 
     @classmethod
     def load(cls) -> "Config":
@@ -166,7 +170,11 @@ class Config:
                 lib.uuid = _ensure_local_marker(lib.root, lib.name)
                 needed_migration = True
         active = data.get("active_library") or (libraries[0].name if libraries else "PC")
-        cfg = cls(defaults=defaults, active_library=active, libraries=libraries)
+        close_to_tray = bool(data.get("close_to_tray", False))
+        cfg = cls(
+            defaults=defaults, active_library=active, libraries=libraries,
+            close_to_tray=close_to_tray,
+        )
         if needed_migration:
             cfg.save()
         return cfg
@@ -178,6 +186,7 @@ class Config:
                 {
                     "defaults": asdict(self.defaults),
                     "active_library": self.active_library,
+                    "close_to_tray": self.close_to_tray,
                     "libraries": [asdict(lib) for lib in self.libraries],
                 },
                 f, sort_keys=False, allow_unicode=True,

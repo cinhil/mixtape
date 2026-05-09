@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import shutil
-import subprocess
 import sys
 
 from textual.app import ComposeResult
@@ -12,6 +10,8 @@ from textual.widgets import Button, Footer, Label, Static
 from ..widgets import Checkbox
 
 from .. import autostart
+from ..config import Config
+from ..tray import spawn_detached
 
 
 class SettingsScreen(ModalScreen[None]):
@@ -36,6 +36,7 @@ class SettingsScreen(ModalScreen[None]):
     ]
 
     def compose(self) -> ComposeResult:
+        cfg = self._cfg()
         with Vertical(id="dialog"):
             yield Label("[b]Settings[/b]")
 
@@ -54,6 +55,18 @@ class SettingsScreen(ModalScreen[None]):
             else:
                 yield Static("[yellow]Auto-start not supported on this platform.[/yellow]")
 
+            # Close-to-tray
+            yield Checkbox(
+                "Close window to system tray (keep running in background)",
+                value=cfg.close_to_tray,
+                id="close-to-tray",
+            )
+            yield Static(
+                "[dim]When on, pressing 'q' / Ctrl+C launches the tray and the "
+                "USB watcher keeps running; when off, the app fully exits.[/dim]",
+                id="close-to-tray-info",
+            )
+
             # Tray launch now
             yield Static("[dim]Tray mode runs in the background — USB plug events trigger sync, "
                          "click the icon to open the TUI.[/dim]", id="tray-info")
@@ -66,45 +79,50 @@ class SettingsScreen(ModalScreen[None]):
                 yield Button("Close (Esc)", id="close")
         yield Footer()
 
+    def _cfg(self) -> Config:
+        cfg = getattr(self.app, "config", None)
+        return cfg if isinstance(cfg, Config) else Config.load()
+
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id != "autostart":
-            return
-        ok = autostart.enable() if event.value else autostart.disable()
+        cb_id = event.checkbox.id
         msg_status = self.query_one("#status", Static)
-        if ok:
+        if cb_id == "autostart":
+            ok = autostart.enable() if event.value else autostart.disable()
+            if ok:
+                msg_status.update(
+                    "[green]✓ auto-start enabled — mixtape will launch at login.[/green]"
+                    if event.value else
+                    "[green]✓ auto-start disabled.[/green]"
+                )
+            else:
+                msg_status.update("[red]✗ couldn't update the autostart entry.[/red]")
+                event.checkbox.value = not event.value
+        elif cb_id == "close-to-tray":
+            cfg = self._cfg()
+            cfg.close_to_tray = bool(event.value)
+            cfg.save()
             msg_status.update(
-                "[green]✓ auto-start enabled — mixtape will launch at login.[/green]"
+                "[green]✓ closing the window will launch the tray.[/green]"
                 if event.value else
-                "[green]✓ auto-start disabled.[/green]"
+                "[green]✓ closing the window will fully exit.[/green]"
             )
-        else:
-            msg_status.update("[red]✗ couldn't update the autostart entry.[/red]")
-            # revert visual state if we failed
-            event.checkbox.value = not event.value
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
         if bid == "close":
             self.dismiss(None)
         elif bid == "launch-tray":
-            self._launch_tray(detach=True)
+            self._launch_tray()
         elif bid == "switch-tray":
-            self._launch_tray(detach=True)
+            self._launch_tray()
             self.app.exit()
 
-    def _launch_tray(self, detach: bool = True) -> None:
-        exe = shutil.which("mixtape") or sys.executable
-        cmd: list[str]
-        if exe.endswith("mixtape") or exe.endswith("mixtape.exe"):
-            cmd = [exe, "--tray"]
-        else:
-            cmd = [exe, "-m", "mixtape", "--tray"]
-        kwargs: dict = {"start_new_session": True} if detach else {}
-        try:
-            subprocess.Popen(cmd, **kwargs)
+    def _launch_tray(self) -> None:
+        ok, msg = spawn_detached()
+        if ok:
             self.query_one("#status", Static).update("[green]✓ tray launched.[/green]")
-        except OSError as e:
-            self.query_one("#status", Static).update(f"[red]✗ {e}[/red]")
+        else:
+            self.query_one("#status", Static).update(f"[red]✗ {msg}[/red]")
 
     def action_close(self) -> None:
         self.dismiss(None)

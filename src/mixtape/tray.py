@@ -283,6 +283,26 @@ class TrayApp:
         log.info("notify: %s", message)
 
 
+def spawn_detached() -> tuple[bool, str]:
+    """Launch ``mixtape --tray`` as a detached subprocess and return
+    (ok, message). Used by the settings "Quit and switch to tray" button
+    and by the TUI's close-to-tray quit path.
+
+    The new process inherits no file handles or session from the caller,
+    so the parent can exit immediately afterwards without taking the tray
+    with it."""
+    exe = shutil.which("mixtape") or sys.executable
+    if exe.endswith(("mixtape", "mixtape.exe")):
+        cmd = [exe, "--tray"]
+    else:
+        cmd = [exe, "-m", "mixtape", "--tray"]
+    try:
+        subprocess.Popen(cmd, start_new_session=True)
+        return True, "tray launched"
+    except OSError as e:
+        return False, str(e)
+
+
 def run_tray() -> int:
     logging.basicConfig(
         level=logging.INFO,

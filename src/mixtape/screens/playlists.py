@@ -51,6 +51,13 @@ class PlaylistsScreen(Screen):
         for screen in list(self.app.screen_stack):
             if isinstance(screen, SyncScreen):
                 screen._cancel.set()
+        # Close-to-tray: launch a detached tray process before exiting so USB
+        # plug events + sync keep running while the TUI is gone.
+        if getattr(self.config, "close_to_tray", False):
+            from ..tray import spawn_detached
+            ok, _msg = spawn_detached()
+            if ok:
+                self.app.notify("Mixtape is now in the system tray.", timeout=4)
         # Show "Fermeture en cours…" popup, then exit shortly after so the user
         # sees it and the terminal teardown doesn't feel like a freeze.
         self.app.push_screen(QuittingScreen())
