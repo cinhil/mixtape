@@ -29,7 +29,9 @@ from typing import Any
 import qasync
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .. import autostart  # noqa: F401  (used by SettingsDialog import path)
 from ..client import DaemonClient, DaemonError, DaemonNotRunning
+from .settings_dialog import SettingsDialog
 
 
 log = logging.getLogger("mixtape.desktop")
@@ -59,9 +61,12 @@ class MixtapeWindow(QtWidgets.QMainWindow):
 
     sync_one_requested = QtCore.Signal()
     sync_all_requested = QtCore.Signal()
+    cancel_sync_requested = QtCore.Signal()
     refresh_cookies_requested = QtCore.Signal()
     refresh_update_requested = QtCore.Signal()
     apply_update_requested = QtCore.Signal()
+    open_settings_requested = QtCore.Signal()
+    paste_cookies_requested = QtCore.Signal(str)
     quit_requested = QtCore.Signal()
     set_active_library_requested = QtCore.Signal(str)
     set_close_to_tray_requested = QtCore.Signal(bool)
@@ -93,31 +98,41 @@ class MixtapeWindow(QtWidgets.QMainWindow):
         top_bar.addStretch(1)
         top_bar.addWidget(self._close_to_tray_cb)
 
-        # Playlist table.
-        self._table = QtWidgets.QTableWidget(0, 6)
-        self._table.setHorizontalHeaderLabels(["#", "Name", "Format", "Last sync", "Tracks", "Folder"])
+        # Playlist table — extra column for a per-row progress bar that
+        # only shows when that row's playlist is mid-sync.
+        self._cols = ["#", "Name", "Format", "Last sync", "Tracks", "Folder", "Progress"]
+        self._table = QtWidgets.QTableWidget(0, len(self._cols))
+        self._table.setHorizontalHeaderLabels(self._cols)
         self._table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().setVisible(False)
         self._table.setAlternatingRowColors(True)
+        self._row_bars: list[QtWidgets.QProgressBar] = []
 
         # Action buttons.
         self._sync_one_btn = QtWidgets.QPushButton("Sync selected")
         self._sync_all_btn = QtWidgets.QPushButton("Sync all")
-        self._refresh_cookies_btn = QtWidgets.QPushButton("Refresh cookies")
-        self._update_btn = QtWidgets.QPushButton("Check update")
+        self._cancel_btn = QtWidgets.QPushButton("Cancel sync")
+        self._cancel_btn.setEnabled(False)
+        self._cookies_btn = QtWidgets.QPushButton("Paste cookies…")
+        self._update_btn = QtWidgets.QPushButton("Check update…")
+        self._settings_btn = QtWidgets.QPushButton("Settings…")
         self._sync_one_btn.clicked.connect(self.sync_one_requested.emit)
         self._sync_all_btn.clicked.connect(self.sync_all_requested.emit)
-        self._refresh_cookies_btn.clicked.connect(self.refresh_cookies_requested.emit)
+        self._cancel_btn.clicked.connect(self.cancel_sync_requested.emit)
+        self._cookies_btn.clicked.connect(self._on_cookies_clicked)
         self._update_btn.clicked.connect(self.refresh_update_requested.emit)
+        self._settings_btn.clicked.connect(self.open_settings_requested.emit)
 
         action_bar = QtWidgets.QHBoxLayout()
         action_bar.addWidget(self._sync_one_btn)
         action_bar.addWidget(self._sync_all_btn)
+        action_bar.addWidget(self._cancel_btn)
         action_bar.addStretch(1)
-        action_bar.addWidget(self._refresh_cookies_btn)
+        action_bar.addWidget(self._cookies_btn)
         action_bar.addWidget(self._update_btn)
+        action_bar.addWidget(self._settings_btn)
 
         # Log pane.
         self._log = QtWidgets.QPlainTextEdit()
@@ -168,6 +183,7 @@ class MixtapeWindow(QtWidgets.QMainWindow):
 
     def set_playlists(self, playlists: list[dict[str, Any]]) -> None:
         self._table.setRowCount(len(playlists))
+        self._row_bars = [None] * len(playlists)  # type: ignore[list-item]
         for i, p in enumerate(playlists):
             self._set_cell(i, 0, str(i + 1))
             self._set_cell(i, 1, p.get("name", "?"))
@@ -176,8 +192,50 @@ class MixtapeWindow(QtWidgets.QMainWindow):
             tc = p.get("track_count")
             self._set_cell(i, 4, str(tc) if tc else "—")
             self._set_cell(i, 5, p.get("relative_path") or "")
+            bar = QtWidgets.QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setTextVisible(False)
+            bar.setVisible(False)
+            self._table.setCellWidget(i, 6, bar)
+            self._row_bars[i] = bar
         self._table.resizeColumnsToContents()
         self._table.horizontalHeader().setStretchLastSection(True)
+
+    def begin_sync(self, playlist_indices: list[int]) -> None:
+        for idx in playlist_indices:
+            if 0 <= idx < len(self._row_bars):
+                bar = self._row_bars[idx]
+                if bar is not None:
+                    bar.setValue(0)
+                    bar.setVisible(True)
+        self._cancel_btn.setEnabled(True)
+        self._sync_one_btn.setEnabled(False)
+        self._sync_all_btn.setEnabled(False)
+
+    def update_row_progress(self, idx: int, percent: int) -> None:
+        if 0 <= idx < len(self._row_bars):
+            bar = self._row_bars[idx]
+            if bar is not None:
+                bar.setValue(max(0, min(100, percent)))
+                bar.setVisible(True)
+
+    def end_sync(self) -> None:
+        for bar in self._row_bars:
+            if bar is not None:
+                bar.setVisible(False)
+        self._cancel_btn.setEnabled(False)
+        self._sync_one_btn.setEnabled(True)
+        self._sync_all_btn.setEnabled(True)
+
+    def _on_cookies_clicked(self) -> None:
+        text, ok = QtWidgets.QInputDialog.getMultiLineText(
+            self, "Paste cookies.txt",
+            "Paste your Netscape cookies.txt content (from a browser extension).",
+            "",
+        )
+        if ok and text.strip():
+            self.paste_cookies_requested.emit(text)
 
     def _set_cell(self, row: int, col: int, text: str) -> None:
         item = QtWidgets.QTableWidgetItem(text)
@@ -197,6 +255,7 @@ class MixtapeWindow(QtWidgets.QMainWindow):
 
     def hide_sync_progress(self) -> None:
         self._sync_progress.setVisible(False)
+        self.end_sync()
 
     def append_log(self, msg: str) -> None:
         self._log.appendHtml(msg)
@@ -255,12 +314,17 @@ class DesktopController(QtCore.QObject):
         # Window → controller wiring.
         window.sync_one_requested.connect(lambda: self._launch(self._sync_one()))
         window.sync_all_requested.connect(lambda: self._launch(self._sync_all()))
+        window.cancel_sync_requested.connect(lambda: self._launch(self._cancel_sync()))
         window.refresh_cookies_requested.connect(lambda: self._launch(self._refresh_cookies()))
-        window.refresh_update_requested.connect(lambda: self._launch(self._refresh_update()))
+        window.refresh_update_requested.connect(lambda: self._launch(self._refresh_update_dialog()))
         window.apply_update_requested.connect(lambda: self._launch(self._apply_update()))
+        window.open_settings_requested.connect(self._show_settings_dialog)
+        window.paste_cookies_requested.connect(lambda t: self._launch(self._set_cookies(t)))
         window.set_active_library_requested.connect(lambda n: self._launch(self._set_active(n)))
         window.set_close_to_tray_requested.connect(lambda v: self._launch(self._set_close_to_tray(v)))
         window.quit_requested.connect(self.quit)
+        # Track current sync targets so progress events can find their row.
+        self._current_sync_indices: list[int] = []
 
         # Tray → controller wiring.
         tray.open_requested.connect(self.show_window)
@@ -344,10 +408,28 @@ class DesktopController(QtCore.QObject):
         name = ev.get("name", "")
         data = ev.get("data", {})
         if name == "sync.started":
-            n = len(data.get("playlists", []))
+            playlists = data.get("playlists", []) or []
+            n = len(playlists)
+            indices = [int(p.get("idx", -1)) for p in playlists if isinstance(p, dict)]
+            indices = [i for i in indices if i >= 0]
+            self._current_sync_indices = indices
             self._win.append_log(f'<span style="color:#7cf">▶</span> sync started — {n} playlist(s)')
             self._win.show_sync_progress(0, max(n, 1))
+            self._win.begin_sync(indices)
             self._tray.showMessage("mixtape", "Sync started", _icon())
+        elif name == "sync.progress":
+            idx = int(data.get("playlist_idx", -1))
+            track_idx = int(data.get("track_idx", 0))
+            track_total = max(int(data.get("track_total", 1)), 1)
+            track_pct = float(data.get("percent", 0.0))
+            # Per-row percent = (completed_tracks + current_track_pct/100) / total
+            overall = ((track_idx - 1) + track_pct / 100.0) / track_total * 100.0
+            self._win.update_row_progress(idx, int(overall))
+        elif name == "sync.track_done":
+            idx = int(data.get("playlist_idx", -1))
+            track_idx = int(data.get("track_idx", 0))
+            track_total = max(int(data.get("track_total", 1)), 1)
+            self._win.update_row_progress(idx, int(track_idx / track_total * 100))
         elif name == "sync.playlist_done":
             self._win.append_log(
                 f'<span style="color:#7c7">✔</span> {data.get("name")} ({data.get("count")} tracks)'
@@ -391,6 +473,50 @@ class DesktopController(QtCore.QObject):
         except DaemonError as e:
             self._win.append_log(f'<span style="color:#e55">sync failed: {e}</span>')
 
+    async def _cancel_sync(self) -> None:
+        try:
+            await self._client.cancel_sync()
+        except DaemonError as e:
+            self._win.append_log(f'<span style="color:#e55">cancel failed: {e}</span>')
+
+    async def _set_cookies(self, content: str) -> None:
+        try:
+            res = await self._client.set_cookies(content)
+        except DaemonError as e:
+            self._win.append_log(f'<span style="color:#e55">cookies rejected: {e}</span>')
+            return
+        if res.get("ok"):
+            self._win.append_log(f'<span style="color:#7c7">✓ cookies updated — {res.get("message","")}</span>')
+        else:
+            self._win.append_log(f'<span style="color:#e55">cookies invalid — {res.get("message","")}</span>')
+
+    async def _refresh_update_dialog(self) -> None:
+        # Re-check + show a small dialog with the result + an Apply button.
+        try:
+            await self._client.refresh_update()
+            s = await self._client.status()
+        except DaemonError as e:
+            self._win.append_log(f'<span style="color:#e55">{e}</span>')
+            return
+        upd = s.get("update")
+        if upd is None:
+            QtWidgets.QMessageBox.information(self._win, "mixtape update",
+                "Not running from a git checkout — can't determine update status.")
+            return
+        if not upd.get("behind"):
+            QtWidgets.QMessageBox.information(self._win, "mixtape update",
+                f"Up to date — {upd.get('message','')}")
+            return
+        msg = QtWidgets.QMessageBox(self._win)
+        msg.setWindowTitle("mixtape update")
+        msg.setText(f"Update available: {upd.get('message','?')}")
+        msg.setInformativeText(f"Channel: {upd.get('channel','?')}. Apply now?")
+        apply_btn = msg.addButton("Apply", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        msg.addButton("Later", QtWidgets.QMessageBox.ButtonRole.RejectRole)
+        msg.exec()
+        if msg.clickedButton() is apply_btn:
+            self._launch(self._apply_update())
+
     async def _refresh_cookies(self) -> None:
         await self._client.refresh_cookies()
 
@@ -416,6 +542,18 @@ class DesktopController(QtCore.QObject):
             await self._client.set_close_to_tray(enabled)
         except DaemonError as e:
             self._win.append_log(f'<span style="color:#e55">{e}</span>')
+
+    def _show_settings_dialog(self) -> None:
+        dlg = SettingsDialog(self._win, bool(self._libs.get("close_to_tray")))
+        dlg.close_to_tray_changed.connect(lambda v: self._launch(self._set_close_to_tray(v)))
+        dlg.shutdown_daemon_requested.connect(lambda: self._launch(self._shutdown_daemon()))
+        dlg.exec()
+
+    async def _shutdown_daemon(self) -> None:
+        try:
+            await self._client.shutdown()
+        except DaemonError:
+            pass
 
     async def _shutdown_and_quit(self) -> None:
         # Don't shut the daemon down on every quit — only when the user
