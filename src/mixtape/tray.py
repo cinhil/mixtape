@@ -397,12 +397,17 @@ def spawn_detached() -> tuple[bool, str]:
     (ok, message). Used by the settings "Tray running" toggle and by the
     TUI's close-to-tray quit path.
 
-    The new process inherits no controlling terminal from the caller, so
-    the parent can exit immediately afterwards without taking the tray
-    with it. Tray stdout + stderr go to ``STATE_DIR/tray-spawn.log`` —
-    pystray init failures (missing display, OLE errors, etc.) would
-    otherwise vanish silently and just look like "the icon never appeared"
-    to the user."""
+    The child must NOT share the TUI's console: when it does, every
+    Textual input event the parent processes can deliver a console
+    control event (e.g. CTRL_C_EVENT) to the child too — we observed
+    the tray dying with KeyboardInterrupt mid-`subprocess.run()` while
+    enumerating volumes the moment a Switch in the TUI fired. On
+    Windows we therefore set ``DETACHED_PROCESS`` (no inherited console
+    at all) plus ``CREATE_NEW_PROCESS_GROUP``. On POSIX
+    ``start_new_session=True`` already gives us a fresh session.
+
+    Tray stdout/stderr go to ``STATE_DIR/tray-spawn.log`` so failures
+    (pystray init, missing OLE, etc.) leave a tail-able trail."""
     from .config import STATE_DIR
     exe = shutil.which("mixtape") or sys.executable
     if exe.endswith(("mixtape", "mixtape.exe")):
@@ -415,13 +420,25 @@ def spawn_detached() -> tuple[bool, str]:
         log_fp = log_path.open("a", encoding="utf-8")
         log_fp.write(f"\n--- spawn {os.getpid()} → {' '.join(cmd)} ---\n")
         log_fp.flush()
-        subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=log_fp,
-            stderr=log_fp,
-            start_new_session=True,
-        )
+        popen_kwargs: dict = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": log_fp,
+            "stderr": log_fp,
+        }
+        if sys.platform == "win32":
+            # DETACHED_PROCESS = 0x00000008, CREATE_NEW_PROCESS_GROUP = 0x00000200.
+            # Use the named subprocess constants so future Python upgrades that
+            # add new bits don't drift out from under us.
+            popen_kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+            # `close_fds=False` lets the inheritable log_fp pass through; on
+            # Windows that's the default but be explicit so the contract is
+            # obvious to a future reader.
+            popen_kwargs["close_fds"] = False
+        else:
+            popen_kwargs["start_new_session"] = True
+        subprocess.Popen(cmd, **popen_kwargs)
         return True, f"tray launched (log: {log_path})"
     except OSError as e:
         return False, str(e)
