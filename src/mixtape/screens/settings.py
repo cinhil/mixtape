@@ -11,7 +11,7 @@ from ..widgets import Checkbox
 
 from .. import autostart
 from ..config import Config
-from ..tray import spawn_detached
+from ..tray import kill_running_tray, spawn_detached, tray_is_running
 
 
 class SettingsScreen(ModalScreen[None]):
@@ -20,14 +20,17 @@ class SettingsScreen(ModalScreen[None]):
     CSS = """
     SettingsScreen { align: center middle; }
     #dialog {
-        width: 80; height: auto;
+        width: 86; height: auto;
         border: round $primary; background: $surface;
         padding: 1 2;
     }
-    .row { height: auto; margin: 0 0 1 0; }
+    .section-header {
+        height: 1; margin: 1 0 1 0;
+        text-style: bold; color: $primary;
+    }
+    .info { color: $text-muted; height: auto; min-height: 1; margin: 0 0 1 2; }
     #buttons { height: 3; align: center middle; margin-top: 1; }
     Button { margin: 0 1; }
-    Checkbox { margin: 0 0 1 0; }
     #status { color: $text-muted; height: auto; min-height: 1; margin: 1 0; }
     """
 
@@ -40,10 +43,12 @@ class SettingsScreen(ModalScreen[None]):
         with Vertical(id="dialog"):
             yield Label("[b]Settings[/b]")
 
-            # Auto-start
+            yield Static("── Options ──", classes="section-header")
+
+            # 1) Auto-start
             if autostart.is_supported():
                 yield Checkbox(
-                    "Start mixtape at login (background, in the system tray)",
+                    "Start mixtape at login (background, in the tray)",
                     value=autostart.is_enabled(),
                     id="autostart",
                 )
@@ -51,28 +56,34 @@ class SettingsScreen(ModalScreen[None]):
                     "%APPDATA%\\…\\Startup\\mixtape.lnk" if sys.platform == "win32"
                     else "~/.config/autostart/mixtape.desktop"
                 )
-                yield Static(f"[dim]Drops a launcher at {where}[/dim]", id="autostart-info")
+                yield Static(f"Drops a launcher at {where}", classes="info")
             else:
-                yield Static("[yellow]Auto-start not supported on this platform.[/yellow]")
+                yield Static("[yellow]Auto-start not supported on this platform.[/yellow]", classes="info")
 
-            # Close-to-tray
+            # 2) Close-to-tray (preference, persisted in config)
             yield Checkbox(
-                "Close window to system tray (keep running in background)",
+                "Close window to system tray (keep running on quit)",
                 value=cfg.close_to_tray,
                 id="close-to-tray",
             )
             yield Static(
-                "[dim]When on, pressing 'q' / Ctrl+C launches the tray and the "
-                "USB watcher keeps running; when off, the app fully exits.[/dim]",
-                id="close-to-tray-info",
+                "When on, pressing 'q' / Ctrl+C launches the tray and the USB "
+                "watcher keeps running. When off, the app fully exits.",
+                classes="info",
             )
 
-            # Tray launch now
-            yield Static("[dim]Tray mode runs in the background — USB plug events trigger sync, "
-                         "click the icon to open the TUI.[/dim]", id="tray-info")
-            with Horizontal(classes="row"):
-                yield Button("Launch tray now", id="launch-tray", variant="primary")
-                yield Button("Quit and switch to tray", id="switch-tray", variant="warning")
+            # 3) Tray running (live state — flipping it spawns / kills the tray)
+            running = tray_is_running()
+            yield Checkbox(
+                self._tray_label(running),
+                value=running,
+                id="tray-running",
+            )
+            yield Static(
+                "Spawns or stops the tray daemon right now. The tray runs in the "
+                "background, watches USB plug events, and shows a clickable icon.",
+                classes="info",
+            )
 
             yield Static("", id="status")
             with Horizontal(id="buttons"):
@@ -82,6 +93,9 @@ class SettingsScreen(ModalScreen[None]):
     def _cfg(self) -> Config:
         cfg = getattr(self.app, "config", None)
         return cfg if isinstance(cfg, Config) else Config.load()
+
+    def _tray_label(self, running: bool) -> str:
+        return "Tray running [green](active)[/green]" if running else "Tray running [dim](stopped)[/dim]"
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         cb_id = event.checkbox.id
@@ -106,23 +120,46 @@ class SettingsScreen(ModalScreen[None]):
                 if event.value else
                 "[green]✓ closing the window will fully exit.[/green]"
             )
+        elif cb_id == "tray-running":
+            self._toggle_tray(event)
+
+    def _toggle_tray(self, event: Checkbox.Changed) -> None:
+        msg_status = self.query_one("#status", Static)
+        cb = event.checkbox
+        if event.value:
+            ok, msg = spawn_detached()
+            if ok:
+                # Give the new process a moment to write its pid file before
+                # we re-query state for the label.
+                self.set_timer(0.6, self._refresh_tray_label)
+                msg_status.update("[green]✓ tray launched.[/green]")
+            else:
+                msg_status.update(f"[red]✗ {msg}[/red]")
+                cb.value = False  # revert visual
+        else:
+            ok, msg = kill_running_tray()
+            if ok:
+                self._refresh_tray_label()
+                msg_status.update(f"[green]✓ {msg}.[/green]")
+            else:
+                msg_status.update(f"[yellow]{msg}[/yellow]")
+                # Re-query state in case the user clicked while it was already
+                # off — keep the visual aligned with reality.
+                self._refresh_tray_label()
+
+    def _refresh_tray_label(self) -> None:
+        try:
+            cb = self.query_one("#tray-running", Checkbox)
+        except Exception:
+            return
+        running = tray_is_running()
+        cb.label = self._tray_label(running)
+        if cb.value != running:
+            cb.value = running
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        bid = event.button.id
-        if bid == "close":
+        if event.button.id == "close":
             self.dismiss(None)
-        elif bid == "launch-tray":
-            self._launch_tray()
-        elif bid == "switch-tray":
-            self._launch_tray()
-            self.app.exit()
-
-    def _launch_tray(self) -> None:
-        ok, msg = spawn_detached()
-        if ok:
-            self.query_one("#status", Static).update("[green]✓ tray launched.[/green]")
-        else:
-            self.query_one("#status", Static).update(f"[red]✗ {msg}[/red]")
 
     def action_close(self) -> None:
         self.dismiss(None)

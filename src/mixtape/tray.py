@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -32,6 +33,86 @@ log = logging.getLogger("mixtape.tray")
 
 
 _State = Literal["idle", "syncing", "warning", "error"]
+
+
+# ── PID file for the running tray daemon ────────────────────────────────────
+# A second tray instance would fight the first for port 4416 and the USB
+# watcher; the PID file lets settings tell whether one is already running and
+# lets the user toggle it off cleanly.
+
+def _pid_file_path() -> Path:
+    from .config import STATE_DIR
+    return STATE_DIR / "tray.pid"
+
+
+def _pid_alive(pid: int) -> bool:
+    """Best-effort cross-platform 'is this PID still alive' check."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Process exists but we can't signal it (rare on Windows for our own
+        # spawned children, but treat as "alive" — better than killing user
+        # workflow with a false negative).
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def tray_is_running() -> bool:
+    p = _pid_file_path()
+    if not p.is_file():
+        return False
+    try:
+        pid = int(p.read_text().strip())
+    except (OSError, ValueError):
+        return False
+    if _pid_alive(pid):
+        return True
+    # Stale file — remove it so subsequent checks don't keep returning False
+    # via the parse path.
+    try:
+        p.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return False
+
+
+def kill_running_tray(timeout: float = 5.0) -> tuple[bool, str]:
+    """Stop the running tray daemon by signalling its PID. Returns
+    (ok, message)."""
+    import time
+    p = _pid_file_path()
+    if not p.is_file():
+        return False, "tray is not running (no pid file)"
+    try:
+        pid = int(p.read_text().strip())
+    except (OSError, ValueError) as e:
+        return False, f"unreadable pid file: {e}"
+    if not _pid_alive(pid):
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, "tray was not running (stale pid)"
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as e:
+        return False, f"could not signal pid {pid}: {e}"
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return True, f"tray (pid {pid}) stopped"
+        time.sleep(0.1)
+    return False, f"tray (pid {pid}) did not exit within {timeout:.0f}s"
 
 
 _STATE_DOT = {
@@ -100,11 +181,22 @@ class TrayApp:
 
     def start(self) -> int:
         """Build the tray icon and run the event loop. Blocks until Quit."""
+        if tray_is_running():
+            log.error("another mixtape tray is already running — refusing to start a second one.")
+            return 1
         try:
             import pystray
         except ImportError:
             log.error("pystray not installed — tray mode unavailable.")
             return 2
+
+        # Claim the PID file so settings + future invocations can see us.
+        try:
+            pid_path = _pid_file_path()
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text(str(os.getpid()))
+        except OSError as e:
+            log.warning("could not write tray pid file: %s", e)
 
         # Headless background bits
         ok, msg = self.bgutil.start()
@@ -147,6 +239,11 @@ class TrayApp:
         try:
             self.bgutil.stop()
         except Exception:  # noqa: BLE001
+            pass
+        # Release the PID file so settings stops thinking we're running.
+        try:
+            _pid_file_path().unlink(missing_ok=True)
+        except OSError:
             pass
 
     # ── menu actions ───────────────────────────────────────────────────────
