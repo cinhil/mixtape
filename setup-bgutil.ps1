@@ -10,6 +10,18 @@
 $ErrorActionPreference = 'Stop'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
+# Native commands (git, deno, …) routinely write progress to stderr on
+# success; with EAP=Stop those writes turn into terminating ErrorRecords
+# even with `2>&1`. Wrap any native invocation here to relax EAP for that
+# one call; we still rely on $LASTEXITCODE afterwards to detect real
+# failures.
+function Invoke-Native {
+    param([Parameter(Mandatory=$true)][scriptblock]$Block)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Block } finally { $ErrorActionPreference = $prev }
+}
+
 $DataDir   = if ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME 'mixtape' } else { Join-Path $env:LOCALAPPDATA 'mixtape' }
 $ServerDir = Join-Path $DataDir 'bgutil-server'
 $RepoUrl   = 'https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git'
@@ -35,7 +47,7 @@ New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 if (-not (Test-Path (Join-Path $ServerDir '.git'))) {
     Write-Host "▶ Cloning bgutil-ytdlp-pot-provider into $ServerDir (server/ only) …"
     $Tmp = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "bgutil-clone-$(Get-Random)")
-    git clone --depth 1 --branch $RepoRef $RepoUrl $Tmp.FullName | Out-Null
+    Invoke-Native { & git clone --depth 1 --branch $RepoRef $RepoUrl $Tmp.FullName 2>&1 } | Out-Null
     if (Test-Path $ServerDir) { Remove-Item -Recurse -Force $ServerDir }
     Move-Item (Join-Path $Tmp 'server') $ServerDir
     if (Test-Path (Join-Path $Tmp '.git')) {
@@ -64,7 +76,8 @@ Push-Location $ServerDir
 try {
     $env:DENO_NO_PROMPT = '1'
     $env:DENO_NO_UPDATE_CHECK = '1'
-    deno install --allow-scripts --entrypoint src/generate_once.ts
+    Invoke-Native { & deno install --allow-scripts --entrypoint src/generate_once.ts 2>&1 } | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "deno install failed (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location
 }

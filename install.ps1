@@ -28,6 +28,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# PowerShell-Stop trap: native commands (uv, git, deno, …) routinely write
+# progress lines to stderr *on success*. With $ErrorActionPreference='Stop',
+# PS wraps each stderr write as a terminating ErrorRecord — even `2>&1`
+# doesn't escape it, because the error fires before the merge. Wrap any
+# native invocation in this helper to relax EAP for that one call; we still
+# rely on $LASTEXITCODE afterwards to detect real failures.
+function Invoke-Native {
+    param([Parameter(Mandatory=$true)][scriptblock]$Block)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Block } finally { $ErrorActionPreference = $prev }
+}
+
 # Force TLS 1.2 for any Invoke-RestMethod / Invoke-WebRequest calls — needed
 # on a freshly-installed Windows PowerShell 5.1 whose default protocol is
 # still TLS 1.0/1.1, which GitHub now refuses. No-op on PS 7+.
@@ -95,7 +108,7 @@ foreach ($p in $prereqs) {
         continue
     }
     Step "Installing $($p.Display) …"
-    winget install --id $p.Id -e --accept-package-agreements --accept-source-agreements --silent | Out-Null
+    Invoke-Native { & winget install --id $p.Id -e --accept-package-agreements --accept-source-agreements --silent 2>&1 } | Out-Null
     Refresh-Path
     if (Get-Command $p.Cmd -ErrorAction SilentlyContinue) {
         OK "$($p.Display) installed"
@@ -112,23 +125,23 @@ if ($LocalMode) {
     OK "Running from existing checkout: $InstallDir"
 } elseif (Test-Path (Join-Path $InstallDir '.git')) {
     Step "Updating existing clone at $InstallDir"
-    git -C $InstallDir fetch --tags --prune origin
-    git -C $InstallDir checkout --quiet $TargetRef
+    Invoke-Native { & git -C $InstallDir fetch --tags --prune origin 2>&1 } | Write-Host
+    Invoke-Native { & git -C $InstallDir checkout --quiet $TargetRef 2>&1 } | Write-Host
     # If we're on a branch, fast-forward; if on a tag, checkout already moved.
-    git -C $InstallDir symbolic-ref --quiet HEAD *> $null
+    Invoke-Native { & git -C $InstallDir symbolic-ref --quiet HEAD 2>&1 } | Out-Null
     if ($LASTEXITCODE -eq 0) {
-        git -C $InstallDir pull --ff-only
+        Invoke-Native { & git -C $InstallDir pull --ff-only 2>&1 } | Write-Host
     }
     $LASTEXITCODE = 0
     OK "Source at $TargetRef"
 } else {
     Step "Cloning to $InstallDir ($TargetRef)"
     New-Item -ItemType Directory -Force -Path (Split-Path $InstallDir) | Out-Null
-    git clone --branch $TargetRef $RepoUrl $InstallDir 2>$null
+    Invoke-Native { & git clone --branch $TargetRef $RepoUrl $InstallDir 2>&1 } | Write-Host
     if ($LASTEXITCODE -ne 0) {
         # Fallback (e.g. ref is a commit hash, not a branch/tag)
-        git clone $RepoUrl $InstallDir
-        git -C $InstallDir checkout --quiet $TargetRef 2>$null
+        Invoke-Native { & git clone $RepoUrl $InstallDir 2>&1 } | Write-Host
+        Invoke-Native { & git -C $InstallDir checkout --quiet $TargetRef 2>&1 } | Out-Null
         $LASTEXITCODE = 0
     }
     OK "Cloned at $TargetRef"
@@ -148,7 +161,7 @@ Header "Step 3/5 — Python dependencies"
 # only acting on $LASTEXITCODE keeps the install quiet on success and shows
 # the full diagnostic on real failures.
 Step "Refreshing yt-dlp from upstream master …"
-$lockOut = & uv lock --upgrade-package yt-dlp 2>&1
+$lockOut = Invoke-Native { & uv lock --upgrade-package yt-dlp 2>&1 }
 if ($LASTEXITCODE -ne 0) {
     $lockOut | ForEach-Object { Write-Host $_ }
     Warn "uv lock --upgrade-package yt-dlp failed — keeping the previously-locked yt-dlp revision."
@@ -156,7 +169,7 @@ if ($LASTEXITCODE -ne 0) {
     $LASTEXITCODE = 0
 }
 Step "uv sync …"
-$syncOut = & uv sync 2>&1
+$syncOut = Invoke-Native { & uv sync 2>&1 }
 if ($LASTEXITCODE -ne 0) {
     $syncOut | ForEach-Object { Write-Host $_ }
     Fail "uv sync failed (see output above)"
