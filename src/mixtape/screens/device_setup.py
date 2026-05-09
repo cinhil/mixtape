@@ -6,7 +6,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Footer, Input, Label, ListItem, ListView, Select, Static
+from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Select, Static
+from ..widgets import Checkbox
 
 from ..config import Config, Library
 from ..library_marker import LibraryMarker, read_marker, write_marker

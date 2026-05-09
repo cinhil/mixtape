@@ -144,6 +144,11 @@ class MixtapeApp(App):
 
     def recheck_cookies(self) -> None:
         """Public hook — call after the user pastes new cookies."""
+        # Immediately reflect "checking" in the status bar so the user gets
+        # feedback while the network call (~1-3s) is in flight. The thread
+        # below will overwrite it with the real result.
+        self.cookie_status = CookieStatus(state="unknown", message="checking…")
+        self._on_cookie_status(self.cookie_status)
         threading.Thread(
             target=self._refresh_cookie_status,
             args=(True,), daemon=True, name="cookie-recheck",

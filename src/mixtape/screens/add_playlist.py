@@ -6,7 +6,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Footer, Input, Label, LoadingIndicator, Select, Static
+from textual.widgets import Button, Footer, Input, Label, LoadingIndicator, Select, Static
+from ..widgets import Checkbox
 
 from ..config import Config, Playlist, _slugify
 from ..downloader import PlaylistMeta, fetch_playlist_meta
