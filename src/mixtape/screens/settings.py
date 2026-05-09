@@ -130,7 +130,10 @@ class SettingsScreen(ModalScreen[None]):
             ok, msg = spawn_detached()
             if not ok:
                 msg_status.update(f"[red]✗ {msg}[/red]")
-                sw.value = False
+                # Use set_reactive so the revert doesn't re-emit Changed
+                # and cascade into the OFF-branch (which would call
+                # kill_running_tray and could SIGTERM a stale PID).
+                sw.set_reactive(Switch.value, False)
                 return
             msg_status.update(
                 "[yellow]… launching tray (may take a few seconds on cold start)[/yellow]"
@@ -168,7 +171,10 @@ class SettingsScreen(ModalScreen[None]):
         try:
             sw = self.query_one("#tray-running", Switch)
             if sw.value != running:
-                sw.value = running
+                # set_reactive avoids re-firing Switch.Changed — otherwise
+                # this cascades back into _toggle_tray and could SIGTERM
+                # the wrong process.
+                sw.set_reactive(Switch.value, running)
         except Exception:
             pass
         try:

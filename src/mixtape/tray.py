@@ -93,6 +93,15 @@ def kill_running_tray(timeout: float = 5.0) -> tuple[bool, str]:
         pid = int(p.read_text().strip())
     except (OSError, ValueError) as e:
         return False, f"unreadable pid file: {e}"
+    # Safety net: if PID reuse landed our own process number in the file
+    # (e.g. tray crashed before writing, then OS recycled the PID into our
+    # current TUI), refuse to SIGTERM ourselves.
+    if pid == os.getpid():
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False, "pid file points at this process — refusing to self-kill"
     if not _pid_alive(pid):
         try:
             p.unlink(missing_ok=True)
