@@ -169,9 +169,9 @@ class LibraryService:
 
     async def add_library(self, name: str, path: str, *,
                           volume_name: str = "", auto_sync: bool = False,
-                          uuid: str = "", marker_target_root: str | None = None) -> None:
-        """Add a library entry. If ``marker_target_root`` is provided, write
-        a ``.mixtape`` marker (UUID + name) into that root so the device
+                          uuid: str = "", create_marker: bool = False) -> None:
+        """Add a library entry. If ``create_marker`` is True, write a
+        ``.mixtape`` marker (UUID + name) into ``path`` so the device
         becomes recognisable across machines."""
         from .. import config as _cfg_mod
         async with self._lock:
@@ -182,10 +182,10 @@ class LibraryService:
                 name=name, path=path,
                 volume_name=volume_name, auto_sync=auto_sync, uuid=uuid,
             )
-            if marker_target_root:
+            if create_marker:
                 lib.uuid = await asyncio.to_thread(
                     _cfg_mod._ensure_local_marker,
-                    Path(marker_target_root).expanduser(),
+                    Path(path).expanduser(),
                     name,
                 )
             await asyncio.to_thread(self._cfg.add_library, lib)

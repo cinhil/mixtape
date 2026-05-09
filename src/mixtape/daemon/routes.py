@@ -119,12 +119,11 @@ def make_router(app: Application) -> APIRouter:
 
     @r.post("/libraries", response_model=SimpleOk, status_code=201)
     async def add_library(req: AddLibraryRequest) -> SimpleOk:
-        marker_root = req.path if req.create_marker else None
         try:
             await app.library.add_library(
                 name=req.name, path=req.path,
                 volume_name=req.volume_name, auto_sync=req.auto_sync,
-                uuid=req.uuid, marker_target_root=marker_root,
+                uuid=req.uuid, create_marker=req.create_marker,
             )
         except ValueError as e:
             raise HTTPException(409, str(e))
