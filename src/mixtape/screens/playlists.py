@@ -88,14 +88,14 @@ class PlaylistsScreen(Screen):
             cookie_str = f"[red]? cookies: {cookie_status.state}[/red]"
         bgutil_status, bgutil_msg = self.app.bgutil_status  # type: ignore[attr-defined]
         if not bg:
-            premium_str = "[yellow]premium not setup[/yellow]"
+            companion_str = "[yellow]bgutil companion not set up[/yellow]"
         elif bgutil_status == "ok":
-            premium_str = "[green]✓ premium audio[/green]"
+            companion_str = "[green]✓ bgutil companion[/green]"
         else:
-            premium_str = f"[red]✗ premium: {bgutil_msg}[/red]"
+            companion_str = f"[red]✗ bgutil: {bgutil_msg}[/red]"
         active_lib = self.config.active_library_obj()
         self.query_one("#status-bar", Static).update(
-            f"{n} playlist(s) — {cookie_str} — {premium_str} — "
+            f"{n} playlist(s) — {cookie_str} — {companion_str} — "
             f"library: [b cyan]{active_lib.name}[/b cyan] [dim]({active_lib.path})[/dim]"
         )
 

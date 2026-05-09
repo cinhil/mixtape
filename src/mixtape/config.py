@@ -12,14 +12,15 @@ CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / 
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 COOKIES_FILE = CONFIG_DIR / "cookies.txt"
 
-# bgutil-ytdlp-pot-provider server (JS) — needed to unlock Premium audio streams
+# Path of the optional bgutil-ytdlp-pot-provider companion (JS) — required by
+# upstream yt-dlp changes since 2024 for full audio-format compatibility.
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "mixtape"
 BGUTIL_SERVER_DIR = DATA_DIR / "bgutil-server"
 
 
 def bgutil_server_path() -> Path | None:
     """Return the bgutil server dir if both the Deno script and node_modules
-    are installed, else None (we'll fall back to public-quality streams)."""
+    are installed, else None (yt-dlp then operates without the companion)."""
     script = BGUTIL_SERVER_DIR / "src" / "generate_once.ts"
     node_modules = BGUTIL_SERVER_DIR / "node_modules"
     if script.exists() and node_modules.exists():

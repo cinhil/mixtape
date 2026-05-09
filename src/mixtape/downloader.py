@@ -85,11 +85,10 @@ def _base_opts(cookies: Path | None = None) -> dict[str, Any]:
         # signature/n-challenge can be solved via Deno. Required since 2024.
         "remote_components": ["ejs:github"],
         "extractor_args": {
-            # Client order: tv first (broad audio formats, no PO Token gate),
-            # then web/web_music (which expose Premium AAC 256k / Opus 266k
-            # via the bgutil HTTP daemon's PO Token).
-            # tv_simply is intentionally omitted: it doesn't support cookies and
-            # would just be skipped with a noisy warning per request.
+            # Client priority list — yt-dlp queries each and merges the
+            # available audio formats; bestaudio/best then picks the highest
+            # bitrate among them. tv_simply is omitted because it doesn't
+            # support session cookies (would just be skipped with a warning).
             "youtube": {"player_client": ["tv", "web", "web_music"]},
         },
     }

@@ -47,7 +47,7 @@ def run_headless() -> int:
     if not cs.ok:
         log.warning("cookies invalid — auto-sync will be skipped until you re-paste them")
 
-    # Spin up the bgutil server for Premium streams (best effort).
+    # Spin up the bgutil companion daemon (best effort — optional).
     bgutil = BgutilServer()
     ok, msg = bgutil.start()
     log.info("bgutil server: %s — %s", "ok" if ok else "fail", msg)

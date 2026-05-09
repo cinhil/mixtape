@@ -15,12 +15,24 @@ Cross-platform (Linux · WSL · Windows). Python + Textual + yt-dlp + Deno.
 
 ## Disclaimer
 
-`mixtape` is a personal-use tool to manage your own music libraries on
-hardware you own. **You are responsible for complying with the terms of
-service of any platform you access** and for using it only with content you
-have legitimate rights to access. The project is not affiliated with YouTube,
-Google, or any other music service. Drive letter, volume label, and platform
-detection are entirely local — no telemetry leaves your machine.
+`mixtape` is a personal-use tool for managing music libraries on hardware
+you own, working with content you have legitimate access to.
+**You are responsible for complying with the terms of service of any
+platform you access and with applicable copyright law in your jurisdiction.**
+
+This project does not circumvent any access controls. Audio retrieval uses
+standard `yt-dlp` client APIs with session credentials (cookies) the user
+provides themselves from their own logged-in browser session. The optional
+`bgutil-ytdlp-pot-provider` companion is an upstream-required compatibility
+layer used as documented by that project — it is not a bypass.
+
+The project is not affiliated with, endorsed by, or sponsored by YouTube,
+Google LLC, or any other music service. *YouTube* is a trademark of Google
+LLC and is used here only for nominative description. *Raspberry Pi* is a
+trademark of the Raspberry Pi Foundation.
+
+No telemetry leaves your machine. Drive labels and volume detection are
+entirely local.
 
 ## Features
 
@@ -28,7 +40,7 @@ detection are entirely local — no telemetry leaves your machine.
 - **Auto USB detection** — when a registered device is plugged in, mixtape auto-switches the active library and syncs.
 - **Per-playlist format** — choose `mp3`, `m4a`, `opus` or `flac` per playlist, with a quality preset.
 - **Stable numbering** — every track keeps the same `NNN -` prefix across syncs; reordering on YouTube renames files in place (no re-download).
-- **Premium-quality audio** — when the optional `bgutil-ytdlp-pot-provider` companion is installed, the audio stream selector picks the highest-bitrate format YouTube exposes for your account.
+- **Best available audio** — `bestaudio/best` selector with codec-aware fallback (no double-transcode when the source matches your target format).
 - **Safe-unplug flush** — `os.sync()` after every sync run, plus a notification once the data is physically on disk.
 - **Headless / RPi mode** — `mixtape --headless`, suitable for a systemd user service.
 
@@ -96,13 +108,14 @@ emitted.
 
 Linux: `sudo apt install ffmpeg && curl -fsSL https://deno.land/install.sh | sh`
 
-## Audio resolution helper (`bgutil-ytdlp-pot-provider`)
+## Optional companion (`bgutil-ytdlp-pot-provider`)
 
-Some YouTube audio streams require a *Proof-of-Origin token* since 2024.
-Without it, downloads fall back to a public-quality tier (~135 kbps Opus).
-The optional companion handles that token resolution locally.
+Recent `yt-dlp` versions optionally cooperate with the
+[`bgutil-ytdlp-pot-provider`](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)
+project for full compatibility with upstream API changes. Mixtape integrates
+it via yt-dlp's standard plugin interface; it's optional and entirely local.
 
-`./setup-bgutil.sh` clones the upstream project to
+`./setup-bgutil.sh` clones that upstream project to
 `~/.local/share/mixtape/bgutil-server/` and uses Deno to install its npm
 dependencies (Deno handles npm packages itself — no Node installation
 required). At app launch a local HTTP daemon is started on

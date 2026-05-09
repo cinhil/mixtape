@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Set up bgutil-ytdlp-pot-provider so yt-dlp can unlock Premium-quality YouTube
-# audio streams (AAC 256k / Opus 266k) instead of the public 128–135k tiers.
+# Install the bgutil-ytdlp-pot-provider companion. This is an upstream-required
+# compatibility layer for recent yt-dlp versions; mixtape itself doesn't bypass
+# anything — it just lets yt-dlp work the way the upstream project documents.
 #
 # Idempotent: safe to re-run. Updates the repo + node_modules if already cloned.
 #
@@ -55,8 +56,7 @@ cd "$SERVER_DIR"
 deno install --allow-scripts --entrypoint src/generate_once.ts
 
 if [ -f "src/generate_once.ts" ] && [ -d "node_modules" ]; then
-    echo "✔ bgutil server ready at $SERVER_DIR"
-    echo "  → Premium audio (AAC 256k / Opus 266k) is now unlocked."
+    echo "✔ bgutil companion ready at $SERVER_DIR"
 else
     echo "✗ Setup incomplete — script or node_modules missing." >&2
     exit 1

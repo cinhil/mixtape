@@ -13,11 +13,11 @@ if ! command -v deno >/dev/null 2>&1; then
     echo "  Install: curl -fsSL https://deno.land/install.sh | sh" >&2
 fi
 
-# bgutil server (Premium streams) is optional but strongly recommended.
+# Optional bgutil-ytdlp-pot-provider companion (recommended for full upstream
+# compatibility with recent yt-dlp versions).
 SERVER_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/mixtape/bgutil-server"
 if [ ! -f "$SERVER_DIR/src/generate_once.ts" ] || [ ! -d "$SERVER_DIR/node_modules" ]; then
-    echo "INFO: bgutil server not set up — downloads will fall back to public-quality streams (~135k)." >&2
-    echo "  Run ./setup-bgutil.sh once to unlock Premium AAC 256k / Opus 266k." >&2
+    echo "INFO: bgutil companion not set up — run ./setup-bgutil.sh for full yt-dlp compatibility." >&2
 fi
 
 exec uv run mixtape "$@"
