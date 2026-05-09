@@ -21,6 +21,10 @@ from .config import STATE_DIR, bgutil_server_path
 
 DEFAULT_PORT = 4416
 SERVER_URL = f"http://127.0.0.1:{DEFAULT_PORT}"
+# yt-dlp's bgutil:http plugin queries 127.0.0.1, so we patch the server to
+# bind there. We still ping [::1] as a fallback for unpatched/older installs
+# where the server is IPv6-only on Windows (IPV6_V6ONLY default).
+PING_URLS = (SERVER_URL, f"http://[::1]:{DEFAULT_PORT}")
 PING_TIMEOUT = 1.0
 START_TIMEOUT = 15.0
 
@@ -52,11 +56,14 @@ def _find_deno() -> str | None:
 
 def is_server_running() -> bool:
     """Quick health check on the bgutil HTTP endpoint."""
-    try:
-        with urllib.request.urlopen(f"{SERVER_URL}/ping", timeout=PING_TIMEOUT) as r:
-            return 200 <= r.status < 300
-    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
-        return False
+    for base in PING_URLS:
+        try:
+            with urllib.request.urlopen(f"{base}/ping", timeout=PING_TIMEOUT) as r:
+                if 200 <= r.status < 300:
+                    return True
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            continue
+    return False
 
 
 class BgutilServer:

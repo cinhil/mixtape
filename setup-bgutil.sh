@@ -51,6 +51,15 @@ else
     echo "▶ Repo already present at $SERVER_DIR — skipping clone."
 fi
 
+# Upstream binds the HTTP server to "::" (IPv6 wildcard). On Windows that's
+# IPv6-only by default (IPV6_V6ONLY), so yt-dlp + mixtape — which both query
+# 127.0.0.1:4416 — can't reach it. Rewrite to bind IPv4 loopback. Idempotent.
+MAIN_TS="$SERVER_DIR/src/main.ts"
+if [ -f "$MAIN_TS" ] && grep -q 'host: "::"' "$MAIN_TS"; then
+    echo "▶ Patching $MAIN_TS to bind 127.0.0.1 (Windows IPv6-only fix) …"
+    sed -i 's/host: "::"/host: "127.0.0.1"/' "$MAIN_TS"
+fi
+
 echo "▶ Installing JS deps via 'deno install' (~150 MB, one-time) …"
 cd "$SERVER_DIR"
 deno install --allow-scripts --entrypoint src/generate_once.ts

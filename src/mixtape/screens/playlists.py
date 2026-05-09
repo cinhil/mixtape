@@ -17,6 +17,7 @@ from .libraries import LibrariesScreen
 from .quitting import QuittingScreen
 from .settings import SettingsScreen
 from .sync import SyncScreen
+from .update import UpdateScreen
 
 
 class PlaylistsScreen(Screen):
@@ -38,6 +39,7 @@ class PlaylistsScreen(Screen):
         Binding("i", "import_lib", "Import"),
         Binding("l", "libraries", "Libraries"),
         Binding("o", "settings", "Settings"),
+        Binding("u", "update", "Update"),
         Binding("q", "quit_app", "Quit", priority=True),
         Binding("ctrl+c", "quit_app", "Quit", show=False, priority=True),
     ]
@@ -274,6 +276,11 @@ class PlaylistsScreen(Screen):
 
     def action_settings(self) -> None:
         self.app.push_screen(SettingsScreen())
+
+    def action_update(self) -> None:
+        def cb(_):
+            self._refresh_status()
+        self.app.push_screen(UpdateScreen(), cb)
 
     def action_libraries(self) -> None:
         def cb(_):

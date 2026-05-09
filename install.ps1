@@ -157,7 +157,14 @@ if (-not $NoShortcut) {
     $shortcutPath  = Join-Path ([Environment]::GetFolderPath('Desktop')) 'mixtape.lnk'
     $launcher      = Join-Path $InstallDir 'run.ps1'
     $iconCandidate = Join-Path $InstallDir 'mixtape.ico'
-    $shortcut      = $WshShell.CreateShortcut($shortcutPath)
+
+    # Delete any existing shortcut first — Windows caches .lnk icons very
+    # aggressively, so overwriting in place doesn't refresh the visible icon.
+    if (Test-Path $shortcutPath) {
+        try { Remove-Item -Force -Path $shortcutPath } catch { }
+    }
+
+    $shortcut = $WshShell.CreateShortcut($shortcutPath)
     # Prefer PowerShell 7 (pwsh) when available, otherwise fall back to the
     # built-in Windows PowerShell. Avoid `??` so Windows PowerShell 5.1 can
     # parse this script too (the null-coalescing operator is PS 7+).
@@ -172,6 +179,15 @@ if (-not $NoShortcut) {
     $shortcut.Description      = 'mixtape — sync YT Music playlists to USB MP3 players'
     if (Test-Path $iconCandidate) { $shortcut.IconLocation = $iconCandidate }
     $shortcut.Save()
+
+    # Ask the shell to refresh icon caches so the new icon shows up without
+    # a logoff. Best-effort — silently ignore if either tool is missing.
+    try { ie4uinit.exe -show 2>$null | Out-Null } catch { }
+    try {
+        $sig = '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);'
+        $type = Add-Type -MemberDefinition $sig -Name 'Mixtape_SH' -Namespace Mx -PassThru -ErrorAction SilentlyContinue
+        if ($type) { $type::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero) }
+    } catch { }
     OK "Desktop shortcut created: $shortcutPath"
 } else {
     Step "Skipping desktop shortcut (-NoShortcut)"

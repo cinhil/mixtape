@@ -46,6 +46,19 @@ if (-not (Test-Path (Join-Path $ServerDir '.git'))) {
     Write-Host "▶ Repo already present at $ServerDir — skipping clone."
 }
 
+# Upstream binds the HTTP server to "::" (IPv6 wildcard). On Windows that's
+# IPv6-only by default (IPV6_V6ONLY), so yt-dlp + mixtape — which both query
+# 127.0.0.1:4416 — can't reach it. Rewrite to bind IPv4 loopback. Idempotent.
+$MainTs = Join-Path $ServerDir 'src\main.ts'
+if (Test-Path $MainTs) {
+    $orig = Get-Content -Raw -Path $MainTs
+    if ($orig -match 'host:\s*"::"') {
+        Write-Host "▶ Patching $MainTs to bind 127.0.0.1 (Windows IPv6-only fix) …"
+        ($orig -replace 'host:\s*"::"', 'host: "127.0.0.1"') |
+            Set-Content -NoNewline -Path $MainTs -Encoding UTF8
+    }
+}
+
 Write-Host "▶ Installing JS deps via 'deno install' (~150 MB, one-time) …"
 Push-Location $ServerDir
 try {
