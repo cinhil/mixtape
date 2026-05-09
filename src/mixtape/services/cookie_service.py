@@ -47,16 +47,21 @@ class CookieService:
         await asyncio.to_thread(write_cookies, normalised)
         return await self.refresh(force=True)
 
-    async def refresh(self, *, force: bool = False, announce: bool = True) -> CookieStatus:
+    async def refresh(self, *, force: bool = False) -> CookieStatus:
+        # User-initiated refresh: show "checking…" optimistically so the
+        # UI gets immediate feedback during the (~1-3s) network call.
+        # The periodic loop calls _silent_refresh below to skip the
+        # speculative emit.
+        self._bus.publish("cookies.status", state="unknown", message="checking…")
+        return await self._silent_refresh(force=force)
+
+    async def _silent_refresh(self, *, force: bool) -> CookieStatus:
         if force:
             await asyncio.to_thread(invalidate_cache)
-        if announce:
-            # Optimistic "checking…" so user-initiated refreshes show a
-            # spinner. Skip from the periodic loop where it would just
-            # flicker the UI for nobody.
-            self._bus.publish("cookies.status", state="unknown", message="checking…")
         status = await asyncio.to_thread(get_cookie_status, force)
         prev, self._status = self._status, status
+        # Compare (state, message) rather than CookieStatus's auto-eq:
+        # checked_at differs every refresh, which would over-emit.
         if (prev.state, prev.message) != (status.state, status.message):
             self._bus.publish("cookies.status", state=status.state, message=status.message)
         return status
@@ -65,7 +70,6 @@ class CookieService:
         try:
             while True:
                 await asyncio.sleep(PERIODIC_INTERVAL_S)
-                # Quiet refresh — only emits if the status actually changed.
-                await self.refresh(force=True, announce=False)
+                await self._silent_refresh(force=True)
         except asyncio.CancelledError:
             pass

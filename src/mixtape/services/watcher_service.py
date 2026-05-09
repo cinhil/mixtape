@@ -3,8 +3,8 @@ worker thread) and translates plug events into bus messages.
 
 Identity resolution (volume → library) lives here, not in the UI:
 when a known device's marker UUID matches a registered library, we
-emit ``library.activated`` with the new mount path and let the rest
-of the stack react. Auto-sync is the SyncService's job.
+update the library's path and switch active. Auto-sync is the
+SyncService's job.
 """
 from __future__ import annotations
 
@@ -27,16 +27,28 @@ class WatcherService:
         self._library = library
         self._watcher: VolumeWatcher | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        # identifier → marker UUID (or "" for "no marker"). Lets us
-        # skip the per-volume marker probe on duplicate change events
-        # — find_marker_on_volume reads from disk + parses YAML.
-        self._marker_cache: dict[str, str] = {}
+        # identifier → (marker UUID or None, last-seen mount_path).
+        # The cache exists so duplicate plug events skip the disk-walk +
+        # YAML parse in find_marker_on_volume; we still re-call
+        # update_library_path when the mount changes (USB drive keeps
+        # its identifier across a remount-with-different-letter).
+        self._marker_cache: dict[str, tuple[str | None, str]] = {}
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._watcher = VolumeWatcher(self._on_change)
-        # VolumeWatcher.start() spawns its own thread — quick.
         await asyncio.to_thread(self._watcher.start)
+        # VolumeWatcher seeds its `_known` set with whatever is mounted
+        # *now*, so its first `VolumeChange` only fires on subsequent
+        # plug events. That means a USB drive plugged in BEFORE the
+        # daemon started is invisible to _maybe_match_library. Probe
+        # the seed manually.
+        try:
+            initial = await asyncio.to_thread(self._watcher.backend.list_volumes)
+        except Exception:  # noqa: BLE001
+            initial = []
+        for vol in initial:
+            await self._maybe_match_library(vol.identifier, str(vol.mount_path))
 
     async def stop(self) -> None:
         if self._watcher:
@@ -59,40 +71,39 @@ class WatcherService:
                 mount_path=str(vol.mount_path),
                 fs_type=vol.fs_type,
             )
-            if vol.identifier not in self._marker_cache:
-                await self._maybe_match_library(vol.identifier, str(vol.mount_path))
+            await self._maybe_match_library(vol.identifier, str(vol.mount_path))
         for ident in change.removed:
             self._marker_cache.pop(ident, None)
             self._bus.publish("volume.removed", identifier=ident)
             await self._maybe_active_went_offline()
 
     async def _maybe_match_library(self, identifier: str, mount_path: str) -> None:
-        marker_hit = await asyncio.to_thread(find_marker_on_volume, Path(mount_path))
-        if not marker_hit:
-            self._marker_cache[identifier] = ""
+        cached = self._marker_cache.get(identifier)
+        if cached is None:
+            marker_hit = await asyncio.to_thread(find_marker_on_volume, Path(mount_path))
+            if not marker_hit:
+                self._marker_cache[identifier] = (None, mount_path)
+                return
+            marker, marker_root = marker_hit
+            self._marker_cache[identifier] = (marker.uuid, str(marker_root))
+            await self._reconcile(marker.uuid, str(marker_root))
             return
-        marker, marker_root = marker_hit
-        self._marker_cache[identifier] = marker.uuid
-        lib = self._library.config.get_library_by_uuid(marker.uuid)
-        if not lib:
+        cached_uuid, cached_path = cached
+        if cached_path == mount_path:
             return
-        # Goes through the library service so the lock + library.changed
-        # event are honoured (avoids racing other writers).
-        await self._library.update_library_path(marker.uuid, str(marker_root))
+        # Same identifier, different mount — skip the marker probe but
+        # still reconcile the registered library's path.
+        self._marker_cache[identifier] = (cached_uuid, mount_path)
+        if cached_uuid is not None:
+            await self._reconcile(cached_uuid, mount_path)
+
+    async def _reconcile(self, uuid: str, mount_path: str) -> None:
+        lib = await self._library.get_library_by_uuid(uuid)
+        if lib is None:
+            return
+        # update_library_path is locked + emits library.changed itself.
+        await self._library.update_library_path(uuid, mount_path)
         await self._library.set_active_library(lib.name)
 
     async def _maybe_active_went_offline(self) -> None:
-        active = (await self._library.active_library())
-        path = Path(active.path).expanduser()
-        if path.is_dir():
-            return
-        # Active library went offline — switch to first online fallback.
-        cfg = self._library.config
-        fallback = next(
-            (lib for lib in cfg.libraries if lib.online and lib.name != active.name),
-            None,
-        )
-        if fallback is None and cfg.libraries:
-            fallback = cfg.libraries[0]
-        if fallback and fallback.name != cfg.active_library:
-            await self._library.set_active_library(fallback.name)
+        await self._library.ensure_active_online()

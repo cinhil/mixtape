@@ -47,18 +47,15 @@ def find_repo_dir() -> Path | None:
     """Walk up from this module's path looking for a .git directory.
     Returns ``None`` if mixtape isn't running from a git checkout
     (e.g. installed as a wheel)."""
-    return _find_repo_dir()
-
-
-def _find_repo_dir() -> Path | None:
-    """Walk up from this module's path looking for a .git directory.
-    Works whether mixtape is installed editable (most common via uv sync) or
-    bundled — in the latter case repo isn't there and we return None."""
     here = Path(__file__).resolve()
     for ancestor in here.parents:
         if (ancestor / ".git").exists():
             return ancestor
     return None
+
+
+# Back-compat alias.
+_find_repo_dir = find_repo_dir
 
 
 def _git(repo: Path, *args: str, timeout: float = 10.0) -> str | None:
@@ -73,7 +70,7 @@ def _git(repo: Path, *args: str, timeout: float = 10.0) -> str | None:
 
 
 def _do_check() -> UpdateStatus | None:
-    repo = _find_repo_dir()
+    repo = find_repo_dir()
     if not repo:
         return None  # not running from a git checkout — no update notion
 

@@ -22,7 +22,9 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
+
+from .daemon.bootstrap import daemon_launch_argv
 
 
 # ── Windows ────────────────────────────────────────────────────────────────
@@ -44,7 +46,6 @@ def _windows_enable() -> bool:
     Re-uses ``daemon_launch_argv`` so the executable + args match what
     the client uses when it auto-spawns the daemon — single source of
     truth for "how to start the daemon"."""
-    from .daemon.bootstrap import daemon_launch_argv
     argv = daemon_launch_argv()
     target = argv[0]
     args = " ".join(argv[1:])
@@ -203,32 +204,36 @@ def _macos_is_enabled() -> bool:
 
 # ── Public API ─────────────────────────────────────────────────────────────
 
-def _backend_for_platform() -> tuple[Callable[[], bool], Callable[[], bool], Callable[[], bool]] | None:
-    """Return (enable, disable, is_enabled) for the current OS, or None."""
+class _Backend(NamedTuple):
+    enable: Callable[[], bool]
+    disable: Callable[[], bool]
+    is_enabled: Callable[[], bool]
+
+
+def _pick_backend() -> _Backend | None:
     if sys.platform == "win32":
-        return (_windows_enable, _windows_disable, _windows_is_enabled)
+        return _Backend(_windows_enable, _windows_disable, _windows_is_enabled)
     if sys.platform == "darwin":
-        return (_macos_enable, _macos_disable, _macos_is_enabled)
+        return _Backend(_macos_enable, _macos_disable, _macos_is_enabled)
     if sys.platform.startswith("linux"):
-        return (_linux_enable, _linux_disable, _linux_is_enabled)
+        return _Backend(_linux_enable, _linux_disable, _linux_is_enabled)
     return None
 
 
+_BACKEND: _Backend | None = _pick_backend()
+
+
 def is_supported() -> bool:
-    """Whether autostart can be configured on this platform via this module."""
-    return _backend_for_platform() is not None
+    return _BACKEND is not None
 
 
 def enable() -> bool:
-    backend = _backend_for_platform()
-    return backend[0]() if backend else False
+    return _BACKEND.enable() if _BACKEND else False
 
 
 def disable() -> bool:
-    backend = _backend_for_platform()
-    return backend[1]() if backend else False
+    return _BACKEND.disable() if _BACKEND else False
 
 
 def is_enabled() -> bool:
-    backend = _backend_for_platform()
-    return backend[2]() if backend else False
+    return _BACKEND.is_enabled() if _BACKEND else False

@@ -19,6 +19,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .daemon.bootstrap import no_window_creationflags
+
 POLL_INTERVAL_SEC = 5.0
 
 
@@ -137,7 +139,6 @@ def _list_volumes_powershell(*, wsl_paths: bool = True) -> list[Volume]:
         "Select-Object DriveLetter, FileSystemLabel, DriveType, FileSystemType, Size, SizeRemaining "
         "| ConvertTo-Json -Compress",
     ]
-    from .daemon.bootstrap import no_window_creationflags
     run_kwargs: dict = {
         "capture_output": True, "timeout": 10, "text": True, "check": True,
     }

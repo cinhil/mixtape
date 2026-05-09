@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from .config import STATE_DIR, bgutil_server_path
+from .daemon.bootstrap import no_window_creationflags
 
 DEFAULT_PORT = 4416
 SERVER_URL = f"http://127.0.0.1:{DEFAULT_PORT}"
@@ -119,7 +120,6 @@ class BgutilServer:
         log_fp = self._log_path.open("a", encoding="utf-8")
         log_fp.write(f"\n--- start {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
         log_fp.flush()
-        from .daemon.bootstrap import no_window_creationflags
         popen_kwargs: dict = {
             "env": env, "cwd": str(server_dir),
             "stdin": subprocess.DEVNULL, "stdout": log_fp, "stderr": log_fp,

@@ -60,16 +60,16 @@ def bgutil_server_path() -> Path | None:
 
 def slugify(name: str) -> str:
     """Folder-safe name from a playlist title — strips emojis/punctuation
-    but keeps spaces. Public alias for the legacy ``_slugify``."""
-    return _slugify(name)
-
-
-def _slugify(name: str) -> str:
-    """Folder-safe name from a playlist title — strips emojis/punctuation but
-    keeps spaces (folders with spaces work fine on both Linux and NTFS)."""
+    but keeps spaces (folders with spaces work fine on both Linux and
+    NTFS). Falls back to ``"playlist"`` when nothing usable remains."""
     s = re.sub(r"[^\w\s-]", "", name, flags=re.UNICODE).strip()
     s = re.sub(r"[\s_-]+", " ", s).strip()
     return s or "playlist"
+
+
+# Back-compat alias — the old name was underscore-prefixed; keep it
+# around so existing tests + any third-party code don't break.
+_slugify = slugify
 
 
 @dataclass
@@ -145,7 +145,7 @@ class Config:
         if not CONFIG_FILE.exists():
             pc_path = Path.home() / "Music/mixtape"
             pc_path.mkdir(parents=True, exist_ok=True)
-            pc_uuid = _ensure_local_marker(pc_path, "PC")
+            pc_uuid = ensure_local_marker(pc_path, "PC")
             cfg = cls(
                 libraries=[Library(name="PC", path=str(pc_path), uuid=pc_uuid)],
             )
@@ -173,7 +173,7 @@ class Config:
         # online library — same identity model for PC and USB.
         for lib in libraries:
             if not lib.uuid and lib.online:
-                lib.uuid = _ensure_local_marker(lib.root, lib.name)
+                lib.uuid = ensure_local_marker(lib.root, lib.name)
                 needed_migration = True
         active = data.get("active_library") or (libraries[0].name if libraries else "PC")
         close_to_tray = bool(data.get("close_to_tray", False))
@@ -394,11 +394,6 @@ def _snapshot_playlists_to_disk(data: dict) -> None:
 
 
 def ensure_local_marker(root: Path, name: str) -> str:
-    """Public alias for the historical ``_ensure_local_marker``."""
-    return _ensure_local_marker(root, name)
-
-
-def _ensure_local_marker(root: Path, name: str) -> str:
     """Write a .mixtape marker at ``root`` if absent and return its UUID.
     Used to give every library — PC included — a stable cross-machine identity."""
     from .library_marker import LibraryMarker, read_marker, write_marker

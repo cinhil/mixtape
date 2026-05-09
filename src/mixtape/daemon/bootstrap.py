@@ -14,7 +14,10 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import socket
+import subprocess
+import sys
 import time
 from contextlib import closing
 from dataclasses import asdict, dataclass
@@ -128,12 +131,10 @@ def daemon_launch_argv() -> list[str]:
     ``mixtape-daemon`` console script if it's on PATH, then to
     ``python -m mixtape.daemon.main``. Used by the desktop autostart
     shortcut and by the client when it auto-spawns the daemon."""
-    import sys
     if sys.platform == "win32":
         pythonw = Path(sys.executable).with_name("pythonw.exe")
         if pythonw.is_file():
             return [str(pythonw), "-m", "mixtape.daemon.main"]
-    import shutil
     on_path = shutil.which("mixtape-daemon")
     if on_path:
         return [on_path]
@@ -147,8 +148,6 @@ def detached_popen_kwargs() -> dict[str, object]:
     inherits no console, doesn't propagate Ctrl+C events.
     POSIX: ``start_new_session=True`` — new session, parent can exit
     without taking the child along."""
-    import subprocess
-    import sys
     kwargs: dict[str, object] = {"close_fds": True}
     if sys.platform == "win32":
         kwargs["creationflags"] = (
@@ -163,8 +162,6 @@ def no_window_creationflags() -> int:
     """``CREATE_NO_WINDOW`` on Windows so a console-subsystem child
     spawned from a console-less parent (the tray daemon) doesn't pop
     its own terminal. ``0`` everywhere else."""
-    import sys
     if sys.platform == "win32":
-        import subprocess
         return int(subprocess.CREATE_NO_WINDOW)
     return 0

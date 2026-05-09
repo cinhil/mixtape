@@ -73,6 +73,35 @@ class LibraryService:
             "requires_cookies": p.requires_cookies,
         }
 
+    async def get_library_by_uuid(self, uuid: str) -> Library | None:
+        async with self._lock:
+            return self._cfg.get_library_by_uuid(uuid)
+
+    async def ensure_active_online(self) -> bool:
+        """If the active library's directory has gone offline, switch
+        to the first still-online library (or the first registered if
+        none are online — keeps the app usable). Returns True if a
+        switch happened. Used by the watcher on volume.removed."""
+        async with self._lock:
+            active = self._cfg.active_library_obj()
+            if active.online:
+                return False
+            fallback = next(
+                (lib for lib in self._cfg.libraries
+                 if lib.online and lib.name != active.name),
+                None,
+            )
+            if fallback is None and self._cfg.libraries:
+                fallback = self._cfg.libraries[0]
+            if not fallback or fallback.name == self._cfg.active_library:
+                return False
+            self._cfg.set_active_library(fallback.name)
+            await asyncio.to_thread(self._cfg.save)
+            self._bus.publish("library.activated",
+                              library_name=fallback.name, path=str(fallback.path))
+            self._bus.publish("library.changed", **self._snapshot())
+            return True
+
     async def update_library_path(self, uuid: str, path: str) -> bool:
         """Update a library's mount path (used by the watcher when a
         registered USB volume reappears at a different mount). Returns
