@@ -50,37 +50,63 @@ def _looks_checkered(img: Image.Image) -> bool:
     return n_grey >= 3
 
 
-def remove_checkerboard(img: Image.Image, *, edge_thresh: int = 70) -> Image.Image:
+def remove_checkerboard(img: Image.Image, *, edge_thresh: int = 25) -> Image.Image:
     """Replace baked-in checkerboard background with real alpha=0.
 
-    Uses a flood-fill from each corner (RGB-only) so only pixels
-    *connected* to the background are cleared — interior cassette pixels
-    that happen to share a similar tone are safe.
-
-    ``edge_thresh`` controls how aggressively the fill spreads into
-    anti-aliased edges; higher = cleaner edges but a bit more risk of
-    eating soft-coloured cassette borders.
+    Two-pass approach:
+      1. Pure colour chroma-key: every pixel matching ``_is_checkerboard_pixel``
+         goes to alpha=0. Safe because cassette art uses saturated colours
+         (warm browns / reds / black) outside the grey range.
+      2. Anti-aliasing cleanup: any pixel still adjacent to a now-transparent
+         pixel AND close-ish to grey gets its alpha reduced proportionally to
+         its colour distance from grey. Eliminates the faint halo that pure
+         chroma-key leaves at the edges.
     """
-    rgb = img.convert("RGB").copy()
-    w, h = rgb.size
-    corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
-    for x, y in corners:
-        r, g, b, _ = img.getpixel((x, y))
-        if not _is_checkerboard_pixel(r, g, b):
-            continue
-        ImageDraw.floodfill(rgb, (x, y), _SENTINEL, thresh=edge_thresh)
+    out = img.copy()
+    pixels = out.load()
+    w, h = out.size
 
-    # Build alpha mask: where the flood-fill painted the sentinel → transparent.
-    alpha = img.split()[3].copy()
-    alpha_pixels = alpha.load()
-    rgb_pixels = rgb.load()
+    # Pass 1: hard chroma-key
+    transparent_mask = [[False] * w for _ in range(h)]
     for y in range(h):
         for x in range(w):
-            if rgb_pixels[x, y] == _SENTINEL:
-                alpha_pixels[x, y] = 0
+            r, g, b, a = pixels[x, y]
+            if a == 0 or _is_checkerboard_pixel(r, g, b):
+                pixels[x, y] = (r, g, b, 0)
+                transparent_mask[y][x] = True
 
-    out = img.copy()
-    out.putalpha(alpha)
+    # Pass 2: feather edges. For each pixel that's adjacent to a transparent
+    # one and that's still grey-ish (but didn't quite match the strict
+    # chroma-key), drop its alpha based on its distance from neutral grey.
+    def is_neighbour_transparent(x: int, y: int) -> bool:
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h and transparent_mask[ny][nx]:
+                    return True
+        return False
+
+    for y in range(h):
+        for x in range(w):
+            if transparent_mask[y][x]:
+                continue
+            r, g, b, a = pixels[x, y]
+            if a == 0:
+                continue
+            # Only feather pixels that are grey-tinted AND touch a transparent
+            # neighbour — this protects saturated cassette pixels.
+            if abs(r - g) > 12 or abs(g - b) > 12 or abs(r - b) > 12:
+                continue
+            if not is_neighbour_transparent(x, y):
+                continue
+            # Distance from neutral grey 200 → larger distance keeps more alpha
+            avg = (r + g + b) // 3
+            dist = abs(avg - 200)
+            new_alpha = min(a, int(min(255, dist * 8)))
+            pixels[x, y] = (r, g, b, new_alpha)
+
     return out
 
 
