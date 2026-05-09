@@ -193,19 +193,28 @@ class TrayApp:
         if tray_is_running():
             log.error("another mixtape tray is already running — refusing to start a second one.")
             return 1
-        try:
-            import pystray
-        except ImportError:
-            log.error("pystray not installed — tray mode unavailable.")
-            return 2
 
-        # Claim the PID file so settings + future invocations can see us.
+        # Claim the PID file FIRST so the settings screen's polling loop
+        # detects us within a few hundred ms — pystray import + bgutil
+        # bring-up can take a couple of seconds and that delay used to make
+        # the settings UI report "tray didn't come up within 5s" while the
+        # icon was actually about to appear.
+        pid_path = _pid_file_path()
         try:
-            pid_path = _pid_file_path()
             pid_path.parent.mkdir(parents=True, exist_ok=True)
             pid_path.write_text(str(os.getpid()))
         except OSError as e:
             log.warning("could not write tray pid file: %s", e)
+
+        try:
+            import pystray
+        except ImportError:
+            log.error("pystray not installed — tray mode unavailable.")
+            try:
+                pid_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return 2
 
         # Headless background bits
         ok, msg = self.bgutil.start()
@@ -409,11 +418,21 @@ def spawn_detached() -> tuple[bool, str]:
     Tray stdout/stderr go to ``STATE_DIR/tray-spawn.log`` so failures
     (pystray init, missing OLE, etc.) leave a tail-able trail."""
     from .config import STATE_DIR
-    exe = shutil.which("mixtape") or sys.executable
-    if exe.endswith(("mixtape", "mixtape.exe")):
-        cmd = [exe, "--tray"]
+    # On Windows, prefer pythonw.exe (Windows subsystem — no console
+    # window ever) over mixtape.exe (console launcher — Windows allocates
+    # a console for it, which appears as a stray terminal *and* ties the
+    # tray's lifetime to that window). Fall back gracefully.
+    if sys.platform == "win32":
+        from pathlib import Path
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if pythonw.is_file():
+            cmd = [str(pythonw), "-m", "mixtape", "--tray"]
+        else:
+            exe = shutil.which("mixtape") or sys.executable
+            cmd = [exe, "-m", "mixtape", "--tray"] if not exe.endswith(("mixtape", "mixtape.exe")) else [exe, "--tray"]
     else:
-        cmd = [exe, "-m", "mixtape", "--tray"]
+        exe = shutil.which("mixtape") or sys.executable
+        cmd = [exe, "-m", "mixtape", "--tray"] if not exe.endswith(("mixtape", "mixtape.exe")) else [exe, "--tray"]
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         log_path = STATE_DIR / "tray-spawn.log"
