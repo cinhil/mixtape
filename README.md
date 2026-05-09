@@ -89,33 +89,41 @@ Re-run any time to update — it just `git pull`s.
 
 ### Updates
 
-**Re-run the same one-liner** to update everything in one shot:
+**Re-run the same one-liner** to update everything (the installer is
+idempotent — it picks up new mixtape commits, refreshes yt-dlp, and bumps
+the bgutil companion).
+
+How often: re-run **whenever a sync starts failing on every track** — that's
+almost always a yt-dlp staleness issue (YouTube changes its player JS
+often). Otherwise, monthly is plenty.
+
+### Channels: stable vs dev
+
+By default the installer follows the **latest GitHub Release tag**
+(stable). To track the `main` branch instead (cutting edge — what was just
+committed):
 
 ```bash
 # Linux
-curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash -s -- --dev
 ```
 
 ```powershell
 # Windows
-irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1 | iex
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1))) -Dev
 ```
 
-The installer is idempotent — it detects the existing checkout and:
+You can also pin to a specific version with `--ref=vX.Y.Z` (Linux) or
+`-Ref vX.Y.Z` (Windows).
 
-1. `git pull --ff-only` — picks up new mixtape commits
-2. `uv lock --upgrade-package yt-dlp && uv sync` — pulls the latest yt-dlp
-   (this is the most important one: YouTube changes its player JS often, so
-   yt-dlp ships fixes nearly every day)
-3. Re-runs `setup-bgutil.sh` / `setup-bgutil.ps1` — bumps the bgutil
-   companion if its pinned version was bumped
+See [docs/RELEASING.md](docs/RELEASING.md) for the maintainer-side release
+process (tagging, GitHub Actions, etc.).
 
-How often: re-run **whenever a sync starts failing on every track** — that's
-almost always a yt-dlp staleness issue. Otherwise, monthly is plenty.
+### Cookies (independent of code updates)
 
-Cookies are independent — they expire roughly every 30 days. The TUI shows
-`✗ cookies expired` in the status bar when that happens; press `c` to paste
-fresh ones from your browser.
+Cookies expire roughly every 30 days. The TUI shows `✗ cookies expired` in
+the status bar when that happens; press `c` to paste fresh ones from your
+browser.
 
 In the TUI:
 - `c` paste cookies (use a browser extension like *Get cookies.txt LOCALLY*)

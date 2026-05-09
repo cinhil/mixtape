@@ -1,0 +1,43 @@
+# Auto-create a GitHub Release whenever a v* tag is pushed.
+#
+# Trigger:  git tag v0.1.0b2 && git push --tags
+# Result:   a GitHub Release with the tag, auto-generated release notes, and
+#           the source archive attached. Pre-release flag is set automatically
+#           for tags that contain "alpha", "beta", "rc", "a", or "b".
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so 'auto-generated' notes have context
+
+      - name: Detect pre-release
+        id: prerelease
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if echo "$tag" | grep -qiE '(alpha|beta|rc|^v[0-9]+(\.[0-9]+)*[ab][0-9])'; then
+            echo "is_prerelease=true"  >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          fail_on_unmatched_files: false

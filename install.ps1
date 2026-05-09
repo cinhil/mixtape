@@ -4,29 +4,42 @@
 #
 #   irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1 | iex
 #
-# Or, if you have already extracted/cloned the project, just:
+# Flags (when invoked with .\install.ps1):
+#   -Dev          follow the 'main' branch (cutting edge) instead of the
+#                 latest release tag (stable, the default)
+#   -Ref X        pin to a specific tag, branch, or commit
+#   -NoShortcut   skip the desktop shortcut step
 #
-#   .\install.ps1
+# Default behaviour: install / update to the latest GitHub Release. If no
+# release exists yet, falls back to 'main'.
 #
-# What it does:
-#   1. Installs prerequisites via winget (Python, uv, ffmpeg, deno, git)
-#   2. Clones the project to %LOCALAPPDATA%\Programs\mixtape (unless you ran
-#      it from inside an existing checkout)
-#   3. Runs `uv sync` to fetch Python deps
-#   4. Sets up the bgutil companion (~150 MB, one-time)
-#   5. Creates a desktop shortcut "mixtape" pointing at run.ps1
-#
-# Override the install location with: $env:MIXTAPE_DIR = "C:\path"; iex (irm …)
-# Idempotent: safe to re-run (it'll just `git pull` if already cloned).
+# Override install location:  $env:MIXTAPE_DIR = "C:\path"; iex (irm …)
+# Idempotent: safe to re-run (it pulls / checks out the target ref).
 
 [CmdletBinding()]
-param([switch]$NoShortcut)
+param(
+    [switch]$NoShortcut,
+    [switch]$Dev,
+    [string]$Ref
+)
 
 $ErrorActionPreference = 'Stop'
 
 $RepoUrl = 'https://github.com/cinhil/mixtape.git'
+$RepoApi = 'https://api.github.com/repos/cinhil/mixtape/releases/latest'
 $DefaultInstall = Join-Path $env:LOCALAPPDATA 'Programs\mixtape'
 $InstallDir = if ($env:MIXTAPE_DIR) { $env:MIXTAPE_DIR } else { $DefaultInstall }
+
+function Resolve-Ref {
+    if ($Ref) { return $Ref }
+    if ($Dev) { return 'main' }
+    try {
+        $r = Invoke-RestMethod -Uri $RepoApi -ErrorAction Stop
+        if ($r.tag_name) { return $r.tag_name }
+    } catch { }
+    return 'main'  # no releases yet → fall back
+}
+$TargetRef = Resolve-Ref
 
 function Header($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 function Step($msg)   { Write-Host "  → $msg" -ForegroundColor White }
@@ -83,19 +96,34 @@ foreach ($p in $prereqs) {
     }
 }
 
-# 2. Clone (or pull) ----------------------------------------------------------
+# 2. Clone (or pull / checkout target ref) -----------------------------------
 Header "Step 2/5 — project source"
+$channel = if ($Dev -or ($TargetRef -eq 'main')) { '(dev)' } else { '(stable)' }
+Step "Target ref: $TargetRef $channel"
 if ($LocalMode) {
     OK "Running from existing checkout: $InstallDir"
 } elseif (Test-Path (Join-Path $InstallDir '.git')) {
     Step "Updating existing clone at $InstallDir"
-    git -C $InstallDir pull --ff-only
-    OK "Source up to date"
+    git -C $InstallDir fetch --tags --prune origin
+    git -C $InstallDir checkout --quiet $TargetRef
+    # If we're on a branch, fast-forward; if on a tag, checkout already moved.
+    git -C $InstallDir symbolic-ref --quiet HEAD *> $null
+    if ($LASTEXITCODE -eq 0) {
+        git -C $InstallDir pull --ff-only
+    }
+    $LASTEXITCODE = 0
+    OK "Source at $TargetRef"
 } else {
-    Step "Cloning to $InstallDir"
+    Step "Cloning to $InstallDir ($TargetRef)"
     New-Item -ItemType Directory -Force -Path (Split-Path $InstallDir) | Out-Null
-    git clone $RepoUrl $InstallDir
-    OK "Cloned"
+    git clone --branch $TargetRef $RepoUrl $InstallDir 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        # Fallback (e.g. ref is a commit hash, not a branch/tag)
+        git clone $RepoUrl $InstallDir
+        git -C $InstallDir checkout --quiet $TargetRef 2>$null
+        $LASTEXITCODE = 0
+    }
+    OK "Cloned at $TargetRef"
 }
 Set-Location $InstallDir
 

@@ -6,36 +6,61 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash
 #
-# Or, if you have already extracted/cloned the project, just:
+# Flags:
+#   --systemd   also install a systemd --user service for unattended sync
+#   --dev       follow the 'main' branch (cutting edge) instead of the latest
+#               release tag (stable, the default)
+#   --ref=X     pin to a specific tag, branch, or commit
 #
-#   ./install.sh
+# Default behaviour: install / update to the latest GitHub Release. If no
+# release exists yet, falls back to 'main'.
 #
-# What it does:
-#   1. Installs apt prerequisites (ffmpeg, git, curl, ca-certificates)
-#   2. Clones the project to ~/.local/share/mixtape-app (unless you ran it
-#      from inside an existing checkout)
-#   3. Installs Deno + uv user-locally if missing
-#   4. Runs `uv sync` to fetch Python deps
-#   5. Sets up the bgutil companion (~150 MB, one-time)
-#   6. Optionally installs a systemd --user unit (pass --systemd)
-#
-# Override the install location with: MIXTAPE_DIR=/some/path bash <(curl …)
-# Idempotent: safe to re-run (it'll just `git pull` if already cloned).
+# Override install location with: MIXTAPE_DIR=/some/path bash <(curl …)
+# Idempotent: safe to re-run (it pulls / checks out the target ref).
 
 set -e
 
 REPO_URL="https://github.com/cinhil/mixtape.git"
+REPO_API="https://api.github.com/repos/cinhil/mixtape/releases/latest"
 DEFAULT_INSTALL="${MIXTAPE_DIR:-$HOME/.local/share/mixtape-app}"
 
 NEED_SYSTEMD=0
+USE_DEV=0
+EXPLICIT_REF=""
 for arg in "$@"; do
     case "$arg" in
         --systemd) NEED_SYSTEMD=1 ;;
+        --dev)     USE_DEV=1 ;;
+        --ref=*)   EXPLICIT_REF="${arg#*=}" ;;
         --help|-h)
-            sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
     esac
 done
+
+# Resolve which git ref to install / update to.
+#   --ref=foo       → that exact tag/branch/commit
+#   --dev           → 'main' (cutting edge, what's just been committed)
+#   default         → latest GitHub Release tag (stable), falls back to 'main'
+#                     if there are no releases yet
+resolve_ref() {
+    if [ -n "$EXPLICIT_REF" ]; then
+        echo "$EXPLICIT_REF"; return
+    fi
+    if [ "$USE_DEV" = "1" ]; then
+        echo "main"; return
+    fi
+    local tag
+    tag=$(curl -fsSL "$REPO_API" 2>/dev/null \
+            | grep -m1 '"tag_name":' \
+            | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/' || true)
+    if [ -n "$tag" ]; then
+        echo "$tag"
+    else
+        echo "main"
+    fi
+}
+TARGET_REF="$(resolve_ref)"
 
 cyan()  { printf "\033[36m%s\033[0m\n" "$*"; }
 ok()    { printf "  \033[32m✓\033[0m %s\n" "$*"; }
@@ -72,20 +97,28 @@ if [ "${#need_apt[@]}" -gt 0 ]; then
     sudo apt install -y "${need_apt[@]}"
 fi
 
-# 2. Clone (or pull) ----------------------------------------------------------
+# 2. Clone (or pull / checkout target ref) -----------------------------------
 cyan ""
 cyan "=== Step 2/6 — project source ==="
+step "Target ref: $TARGET_REF $([ "$USE_DEV" = "1" ] && echo '(dev)' || echo '(stable)')"
 if [ "$LOCAL_MODE" = "1" ]; then
     ok "Running from existing checkout: $INSTALL_DIR"
 elif [ -d "$INSTALL_DIR/.git" ]; then
     step "Updating existing clone at $INSTALL_DIR"
-    git -C "$INSTALL_DIR" pull --ff-only
-    ok "Source up to date"
+    git -C "$INSTALL_DIR" fetch --tags --prune origin
+    git -C "$INSTALL_DIR" checkout --quiet "$TARGET_REF"
+    # If we're on a branch (e.g. main), fast-forward; if on a tag, checkout already moved us.
+    if git -C "$INSTALL_DIR" symbolic-ref --quiet HEAD >/dev/null; then
+        git -C "$INSTALL_DIR" pull --ff-only
+    fi
+    ok "Source at $TARGET_REF"
 else
-    step "Cloning to $INSTALL_DIR"
+    step "Cloning to $INSTALL_DIR ($TARGET_REF)"
     mkdir -p "$(dirname "$INSTALL_DIR")"
-    git clone "$REPO_URL" "$INSTALL_DIR"
-    ok "Cloned"
+    git clone --branch "$TARGET_REF" "$REPO_URL" "$INSTALL_DIR" 2>/dev/null \
+        || git clone "$REPO_URL" "$INSTALL_DIR"
+    git -C "$INSTALL_DIR" checkout --quiet "$TARGET_REF" 2>/dev/null || true
+    ok "Cloned at $TARGET_REF"
 fi
 cd "$INSTALL_DIR"
 
