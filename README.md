@@ -3,8 +3,9 @@
 > ⚠️ **Beta — `0.1.0b1`** · works on the author's setup but lightly tested.
 > Expect rough edges, please file issues.
 
-> Mixtapes for the streaming era — a TUI that mirrors curated YouTube Music
-> playlists onto USB MP3 players.
+> Mixtapes for the streaming era — a **headless** USB-driven sync engine
+> for curated YouTube Music playlists, with a small TUI for the moments you
+> actually need to touch it.
 
 ## Why this exists
 
@@ -23,6 +24,45 @@ get a "safe to unplug" notification. Designed to run **fully unattended** as
 a systemd service on a Raspberry Pi.
 
 Cross-platform (Linux · Windows). Python + Textual + yt-dlp + Deno.
+
+## Daily use is headless — the TUI is just for setup
+
+The point of mixtape is to make the screen disappear. The "happy path"
+runs **without UI at all**:
+
+- **Raspberry Pi / Linux server**: `mixtape --headless`, typically as a
+  `systemd --user` service that auto-starts at boot and watches for USB
+  plug events.
+- **PC / laptop**: `mixtape --tray`, a small system-tray icon doing the
+  same thing in the background. Toggle it from the Settings modal; flip
+  *Close window to system tray* on so quitting the TUI doesn't stop the
+  watcher.
+
+Both modes auto-detect known devices, sync them, and flush the filesystem
+before signalling that it's safe to unplug. After the initial setup you
+can forget mixtape exists — plug a stick, walk away, take the stick.
+
+**The TUI is intentionally not the main interface.** It's the setup +
+maintenance surface, used for the few things that genuinely need a human:
+
+- registering a new library / device,
+- adding or editing playlists,
+- refreshing expired cookies (≈ once a month),
+- browsing the sync log when something looks off.
+
+We picked a TUI rather than a desktop GUI because:
+
+- **It works over SSH** — exactly what you want for a headless RPi you
+  only ever reach through a terminal.
+- **It works the same everywhere** — Linux, Windows, WSL, a console-only
+  Pi — without dragging in a desktop environment, Electron, or Qt.
+- **It's tiny** — Textual plus a handful of pure-Python deps; the runtime
+  footprint is dominated by yt-dlp and Deno, not by the UI.
+
+For remote setups you can do everything over SSH:
+`ssh pi@rpi 'mixtape'` opens the TUI inside your terminal session,
+`ssh pi@rpi 'mixtape --set-cookies' < cookies.txt` refreshes credentials
+without ever touching the Pi.
 
 ## Disclaimer
 
@@ -175,8 +215,7 @@ In the TUI:
 ## Background mode — system tray
 
 For a "set and forget" experience on a desktop machine (Windows or Linux
-with a desktop environment), launch mixtape as a tray icon instead of a
-TUI:
+with a desktop environment), run mixtape as a tray icon instead of a TUI:
 
 ```bash
 mixtape --tray
@@ -186,12 +225,22 @@ The icon sits in the notification area; right-click for: *Open TUI* ·
 *Sync all now* · *Pause auto-sync* · *Show last sync log* · *Quit*. USB
 plug events still trigger an auto-sync without you doing anything.
 
-In the TUI press **`o`** (settings) to:
-- Toggle **Start mixtape at login** — drops a launcher in the OS startup
-  folder so the tray runs from boot. (Windows: a `.lnk` in the Startup
-  folder; Linux desktop: a `.desktop` in `~/.config/autostart/`.)
-- **Launch tray now** — start the tray immediately from the TUI.
-- **Quit and switch to tray** — close the TUI and continue in tray mode.
+In the TUI press **`o`** (settings) to manage it without leaving the
+keyboard. The Options panel has three checkboxes:
+
+- **Start mixtape at login** — drops a launcher in the OS startup folder
+  so the tray runs from boot. (Windows: a `.lnk` in the Startup folder;
+  Linux desktop: a `.desktop` in `~/.config/autostart/`.)
+- **Close window to system tray** — when on, pressing `q` / Ctrl+C
+  spawns the tray and exits the TUI; the watcher keeps running in the
+  background. When off, quitting the TUI fully exits.
+- **Tray running** — live toggle that spawns or stops the tray daemon
+  right now. The label reflects current state (`(active)` /
+  `(stopped)`).
+
+A PID file under `state/tray.pid` keeps track of the running daemon, so
+toggling *Tray running* off cleanly stops it and a second `mixtape
+--tray` invocation refuses to start a duplicate.
 
 ## Headless / Raspberry Pi
 
@@ -278,8 +327,9 @@ What this enables:
 | `c` | Paste or update cookies |
 | `i` | Import all your YouTube playlists in one go (cookies required) |
 | `l` | Open the libraries screen |
-| `o` | Open settings (auto-start at login, launch tray) |
-| `q` | Quit |
+| `o` | Open settings (auto-start, close-to-tray, tray running) |
+| `u` | Open the update modal (also reachable by clicking the banner) |
+| `q` | Quit (or close to tray, depending on the setting) |
 
 ## System dependencies
 
