@@ -34,21 +34,51 @@ log = logging.getLogger("mixtape.tray")
 _State = Literal["idle", "syncing", "warning", "error"]
 
 
+_STATE_DOT = {
+    "idle":    (76, 175, 80, 255),    # green
+    "syncing": (33, 150, 243, 255),   # blue
+    "warning": (255, 193, 7, 255),    # amber
+    "error":   (244, 67, 54, 255),    # red
+}
+
+
 def _make_icon_image(state: _State):
-    """Return a PIL Image used as the tray icon."""
+    """Return a PIL Image for the tray icon: the mixtape cassette logo with a
+    small status-colour dot in the corner."""
+    from pathlib import Path
     from PIL import Image, ImageDraw
-    color = {
-        "idle":    (76, 175, 80, 255),    # green
-        "syncing": (33, 150, 243, 255),   # blue
-        "warning": (255, 193, 7, 255),    # amber
-        "error":   (244, 67, 54, 255),    # red
-    }.get(state, (158, 158, 158, 255))
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse((4, 4, 60, 60), fill=color, outline=(0, 0, 0, 255), width=2)
-    # Letter "M"
-    d.text((20, 16), "M", fill=(255, 255, 255, 255))
-    return img
+
+    # Find the bundled mixtape.png (project root, two levels up from this file).
+    candidates = [
+        Path(__file__).resolve().parents[2] / "mixtape.png",
+        Path(__file__).resolve().parents[1] / "mixtape.png",
+    ]
+    base: Image.Image | None = None
+    for p in candidates:
+        if p.is_file():
+            try:
+                base = Image.open(p).convert("RGBA")
+                break
+            except Exception:  # noqa: BLE001
+                continue
+
+    if base is None:
+        # Fallback: the old simple coloured circle if the asset is missing.
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        d.ellipse((4, 4, 60, 60), fill=_STATE_DOT.get(state, (158, 158, 158, 255)),
+                  outline=(0, 0, 0, 255), width=2)
+        return img
+
+    # Standardise to a manageable square (most platforms render 64-or-so).
+    icon = base.resize((128, 128), Image.LANCZOS)
+
+    # Overlay a small status dot (lower-right ~25% of the size).
+    d = ImageDraw.Draw(icon)
+    dot_color = _STATE_DOT.get(state, (158, 158, 158, 255))
+    dot_box = (78, 78, 122, 122)
+    d.ellipse(dot_box, fill=dot_color, outline=(20, 20, 20, 255), width=3)
+    return icon
 
 
 class TrayApp:
