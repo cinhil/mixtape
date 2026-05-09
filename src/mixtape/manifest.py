@@ -18,9 +18,21 @@ class Track:
 
 @dataclass
 class Manifest:
+    """Per-playlist state stored next to the audio files.
+
+    Carries enough info (url, name, format, quality, requires_cookies) to
+    reconstruct the Playlist definition on a different machine. So a USB
+    device with a `.mixtape` library marker + per-playlist `.manifest.yaml`
+    files is fully self-describing — any mixtape installation can re-import
+    everything from it.
+    """
     tracks: dict[str, Track] = field(default_factory=dict)  # video_id -> Track
-    format: str = ""  # last sync's audio format (mp3/m4a/...)
-    quality: str = ""  # last sync's quality value
+    # Playlist-level fields
+    url: str = ""
+    name: str = ""
+    format: str = ""
+    quality: str = ""
+    requires_cookies: bool = True
 
     @classmethod
     def load(cls, path: Path) -> "Manifest":
@@ -31,15 +43,21 @@ class Manifest:
         tracks = {vid: Track(**t) for vid, t in raw.items()}
         return cls(
             tracks=tracks,
-            format=data.get("format", "") or "",
-            quality=data.get("quality", "") or "",
+            url=str(data.get("url", "") or ""),
+            name=str(data.get("name", "") or ""),
+            format=str(data.get("format", "") or ""),
+            quality=str(data.get("quality", "") or ""),
+            requires_cookies=bool(data.get("requires_cookies", True)),
         )
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         out = {
+            "url": self.url,
+            "name": self.name,
             "format": self.format,
             "quality": self.quality,
+            "requires_cookies": self.requires_cookies,
             "tracks": {vid: asdict(t) for vid, t in self.tracks.items()},
         }
         path.write_text(yaml.safe_dump(out, sort_keys=False, allow_unicode=True))

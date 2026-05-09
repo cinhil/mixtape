@@ -301,6 +301,11 @@ def sync_playlist(
 
     manifest.format = fmt
     manifest.quality = quality
+    # Snapshot the playlist's identity so any mixtape installation that later
+    # plugs in this device can re-discover the playlist from disk alone.
+    manifest.url = playlist.url
+    manifest.name = playlist.name
+    manifest.requires_cookies = playlist.requires_cookies
     manifest.save(manifest_path)
     pad = manifest.padding()
 

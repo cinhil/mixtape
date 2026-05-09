@@ -9,6 +9,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Footer, Input, Label, ListItem, ListView, Select, Static
 
 from ..config import Config, Library
+from ..library_marker import LibraryMarker, read_marker, write_marker
 from ..platform_io import Volume, detect_backend
 
 
@@ -164,21 +165,37 @@ class DeviceSetupScreen(ModalScreen[Library | None]):
         if not root.exists():
             self.app.notify(f"Path doesn't exist: {root}", severity="warning")
 
-        # Try to detect the volume label for USB auto-detect
+        # Detect the volume label (kept as a fallback hint; primary identity = uuid)
         volume_name = ""
         for v in self._backend.list_volumes():
             if root_str.startswith(str(v.mount_path)):
                 volume_name = v.label
                 break
 
+        # If a .mixtape marker is already at this root (because the device was
+        # registered on another machine before), reuse its uuid + name instead
+        # of generating new ones — that way both machines see the same library.
+        existing = read_marker(root) if root.is_dir() else None
+        if existing:
+            uid = existing.uuid
+            name = name or existing.name
+        else:
+            marker = LibraryMarker.new(name=name, auto_sync=bool(auto_sync), mixtape_version="0.1.0b1")
+            uid = marker.uuid
+            try:
+                write_marker(root, marker)
+            except OSError as e:
+                self.app.notify(f"Could not write .mixtape marker: {e}", severity="warning")
+
         try:
             self.config.add_library(Library(
-                name=name, path=str(root), volume_name=volume_name, auto_sync=bool(auto_sync),
+                name=name, path=str(root), volume_name=volume_name,
+                auto_sync=bool(auto_sync), uuid=uid,
             ))
         except ValueError as e:
             self.app.notify(str(e), severity="error")
             return
-        self.app.notify(f"Library '{name}' registered.")
+        self.app.notify(f"Library '{name}' registered (uuid: {uid[:8]}…).")
         self.dismiss(self.config.get_library(name))
 
     def action_cancel(self) -> None:

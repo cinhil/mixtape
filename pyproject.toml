@@ -36,3 +36,12 @@ build-backend = "uv_build"
 
 [tool.uv.sources]
 yt-dlp = { git = "https://github.com/yt-dlp/yt-dlp.git", rev = "master" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 from textual.app import App
 
 from .bgutil_server import BgutilServer
 from .config import Config
 from .cookies_check import CookieStatus, get_cookie_status, invalidate_cache as invalidate_cookie_cache
+from .library_marker import find_marker_on_volume
 from .platform_io import VolumeChange, VolumeWatcher, platform_name, reconcile_library_path
 from .screens.playlists import PlaylistsScreen
 from .update_check import UpdateStatus, get_update_status
@@ -47,15 +49,29 @@ class MixtapeApp(App):
 
     def _on_volume_change(self, change: VolumeChange) -> None:
         for vol in change.added:
+            # 1) Strongest signal: a .mixtape marker on the volume.
+            marker_hit = find_marker_on_volume(Path(str(vol.mount_path)))
+            if marker_hit:
+                marker, marker_root = marker_hit
+                lib = self.config.get_library_by_uuid(marker.uuid)
+                if lib:
+                    new_path = str(marker_root)
+                    self.call_from_thread(
+                        self._on_known_device_plugged, lib.name, vol.identifier, new_path,
+                    )
+                    continue
+                # Marker exists but library isn't registered on this machine yet.
+                self.call_from_thread(
+                    self._notify_marker_found, marker.name, vol.identifier, str(marker_root),
+                )
+                continue
+            # 2) Fallback: legacy match by volume label (no marker yet)
             matching = next(
                 (lib for lib in self.config.libraries
                  if lib.volume_name and lib.volume_name == vol.label),
                 None,
             )
             if matching:
-                # Drive letters / device nodes can change across re-plugs; we
-                # match by the (stable) volume label, then refresh the path to
-                # wherever it lives now (preserves the user-chosen sub-folder).
                 new_path = reconcile_library_path(matching.path, vol)
                 self.call_from_thread(
                     self._on_known_device_plugged, matching.name, vol.identifier, new_path,
@@ -99,6 +115,13 @@ class MixtapeApp(App):
         self.notify(
             f"🔌 New drive detected: {identifier} ('{label}'). Press 'l' → 'u' to register it as a library.",
             severity="information", timeout=10,
+        )
+
+    def _notify_marker_found(self, marker_name: str, identifier: str, root: str) -> None:
+        self.notify(
+            f"📀 Found mixtape library '{marker_name}' on {identifier} (at {root}). "
+            f"Press 'l' → 'u' to register it on this machine — the device's UUID will be reused.",
+            severity="information", timeout=12,
         )
 
     # --- Cookie status ---

@@ -71,11 +71,16 @@ class Library:
 
     Multiple libraries can coexist (e.g. PC drive + USB MP3 player). One is
     "active" at any moment — it determines where syncs read/write files.
+
+    The optional ``uuid`` field (mirrored in a ``.mixtape`` marker file at the
+    library root) is the stable identifier used to recognise a device across
+    machines and even after a volume label change.
     """
     name: str
     path: str  # absolute path to the library root
-    volume_name: str = ""  # Windows volume label, used for USB auto-detect
+    volume_name: str = ""  # Windows volume label, used as a fallback hint
     auto_sync: bool = False  # trigger sync automatically on USB plug-in
+    uuid: str = ""  # matches the .mixtape marker; "" for legacy / local libs
 
 
 @dataclass
@@ -183,6 +188,11 @@ class Config:
 
     def get_library(self, name: str) -> Library | None:
         return next((lib for lib in self.libraries if lib.name == name), None)
+
+    def get_library_by_uuid(self, uid: str) -> Library | None:
+        if not uid:
+            return None
+        return next((lib for lib in self.libraries if lib.uuid == uid), None)
 
     # --- playlist helpers ---
 
