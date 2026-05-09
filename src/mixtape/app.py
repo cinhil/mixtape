@@ -37,6 +37,10 @@ class MixtapeApp(App):
     def on_mount(self) -> None:
         ok, msg = self.bgutil.start()
         self.bgutil_status = ("ok" if ok else "fail", msg)
+        # Saved active library may be a USB drive that's no longer plugged
+        # in — fall back to a still-online library before showing the UI so
+        # the user doesn't see the stale device's playlists for a moment.
+        self._ensure_active_library_online(on_unplug=False)
         threading.Thread(target=self._refresh_cookie_status, daemon=True, name="cookie-check").start()
         threading.Thread(target=self._refresh_update_status, daemon=True, name="update-check").start()
         self.usb.start()
@@ -120,39 +124,51 @@ class MixtapeApp(App):
                     break
 
     def _on_volume_removed(self) -> None:
-        """A removable volume disappeared. If it was the active library,
-        cancel any in-flight sync, switch to a still-online library, and
-        repaint whatever screen is currently displayed."""
+        """A removable volume disappeared — let the shared fallback logic
+        handle the case where it was our active library."""
+        self._ensure_active_library_online(on_unplug=True)
+
+    def _ensure_active_library_online(self, *, on_unplug: bool) -> None:
+        """If the active library's directory is offline, cancel any open
+        sync, switch to a still-online library, and repaint visible screens.
+
+        Called both at startup (on_unplug=False — the saved active library
+        may be a USB that wasn't plugged in this session) and on USB-yank
+        events (on_unplug=True — louder notification + force-close any open
+        SyncScreen since its destination just vanished)."""
         active = self.config.active_library_obj()
         if active.online:
-            return  # active library still accessible — nothing to do
-        # Cancel + close any open SyncScreen for the (now-gone) device.
-        for screen in list(self.screen_stack):
-            if isinstance(screen, SyncScreen):
-                screen.force_close()
-                break
-        # Pick a fallback: prefer libraries that are online; if none are,
-        # keep whatever the first library is (so the app stays usable
-        # offline) — that's typically the local "PC" entry.
+            return
+        if on_unplug:
+            for screen in list(self.screen_stack):
+                if isinstance(screen, SyncScreen):
+                    screen.force_close()
+                    break
         fallback = next(
             (lib for lib in self.config.libraries if lib.online and lib.name != active.name),
             None,
         )
         if fallback is None and self.config.libraries:
             fallback = self.config.libraries[0]
-        if fallback and fallback.name != self.config.active_library:
+        switched = bool(fallback and fallback.name != self.config.active_library)
+        if switched and fallback is not None:
             self.config.set_active_library(fallback.name)
             self.config.save()
+        # Notify (skip on startup if no actual switch happened — the user
+        # doesn't need a popup for "library was already fine").
+        if on_unplug and switched and fallback is not None:
             self.notify(
                 f"📤 '{active.name}' unplugged — switched to '{fallback.name}'.",
                 severity="warning", timeout=8,
             )
-        else:
+        elif on_unplug:
+            self.notify(f"📤 '{active.name}' unplugged.", severity="warning", timeout=6)
+        elif switched and fallback is not None:
             self.notify(
-                f"📤 '{active.name}' unplugged.",
-                severity="warning", timeout=6,
+                f"📁 '{active.name}' is offline — using '{fallback.name}'.",
+                severity="information", timeout=6,
             )
-        # Refresh whatever screens expose a `_refresh_status` / `_refresh_table`.
+        # Repaint whatever's on the screen stack.
         for screen in self.screen_stack:
             for fn in ("_refresh_table", "_refresh_status"):
                 refresh = getattr(screen, fn, None)
