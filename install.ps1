@@ -1,4 +1,4 @@
-# mixtape — one-shot Windows installer.
+﻿# mixtape — one-shot Windows installer.
 #
 # Run as a one-liner from any PowerShell window (no clone needed):
 #
@@ -139,10 +139,28 @@ Set-Location $InstallDir
 Header "Step 3/5 — Python dependencies"
 # Always pull the freshest yt-dlp (rev = "master" in pyproject is pinned by
 # uv.lock; this is what actually updates it). Cheap when nothing changed.
+#
+# Why we use `2>&1` (merge) and a $LASTEXITCODE check instead of `2>$null`:
+# uv writes its progress lines (e.g. "Resolved 27 packages in 1s") to stderr
+# even on success. With $ErrorActionPreference='Stop' and `2>$null`, any
+# stderr output from a native command becomes a NativeCommandError and kills
+# the script — *even when uv exited 0*. Merging stderr into stdout and then
+# only acting on $LASTEXITCODE keeps the install quiet on success and shows
+# the full diagnostic on real failures.
 Step "Refreshing yt-dlp from upstream master …"
-uv lock --upgrade-package yt-dlp 2>$null | Out-Null
+$lockOut = & uv lock --upgrade-package yt-dlp 2>&1
+if ($LASTEXITCODE -ne 0) {
+    $lockOut | ForEach-Object { Write-Host $_ }
+    Warn "uv lock --upgrade-package yt-dlp failed — keeping the previously-locked yt-dlp revision."
+    Warn "Run the command above directly to see the full error and report it if it persists."
+    $LASTEXITCODE = 0
+}
 Step "uv sync …"
-uv sync
+$syncOut = & uv sync 2>&1
+if ($LASTEXITCODE -ne 0) {
+    $syncOut | ForEach-Object { Write-Host $_ }
+    Fail "uv sync failed (see output above)"
+}
 OK "Python deps up to date"
 
 # 4. bgutil companion ---------------------------------------------------------

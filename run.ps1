@@ -1,4 +1,4 @@
-# Launch mixtape on Windows. Mirror of run.sh.
+﻿# Launch mixtape on Windows. Mirror of run.sh.
 # Compatibility: Windows PowerShell 5.1 and PowerShell 7+.
 
 $ErrorActionPreference = 'Stop'

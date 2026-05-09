@@ -1,4 +1,4 @@
-# Install the bgutil-ytdlp-pot-provider companion (Windows port of setup-bgutil.sh).
+﻿# Install the bgutil-ytdlp-pot-provider companion (Windows port of setup-bgutil.sh).
 # Idempotent: safe to re-run.
 #
 # Requirements:

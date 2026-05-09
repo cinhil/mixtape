@@ -99,26 +99,20 @@ class PlaylistsScreen(Screen):
             companion_str = f"[red]✗ bgutil: {bgutil_msg}[/red]"
         active_lib = self.config.active_library_obj()
         # Update banner — only shown when there's actually something to update.
+        # The "[Update now]" suffix is a Textual click action that opens the
+        # UpdateScreen modal (same as pressing 'u').
         update_status = getattr(self.app, "update_status", None)
         update_str = ""
         if update_status and update_status.has_update:
-            install_cmd = (
-                "irm https://raw.githubusercontent.com/cinhil/mixtape/main/install.ps1 | iex"
-                if self.app.platform == "windows"  # type: ignore[attr-defined]
-                else "curl -fsSL https://raw.githubusercontent.com/cinhil/mixtape/main/install.sh | bash"
-            )
-            channel = update_status.channel
             arrow = "↑"
-            if channel == "stable":
-                update_str = (
-                    f" — [b yellow]{arrow} update {update_status.latest} available[/b yellow] "
-                    f"[dim](run: {install_cmd})[/dim]"
-                )
+            if update_status.channel == "stable":
+                summary = f"{arrow} update {update_status.latest} available"
             else:  # dev
-                update_str = (
-                    f" — [b yellow]{arrow} {update_status.message}[/b yellow] "
-                    f"[dim](run: {install_cmd} -- --dev)[/dim]"
-                )
+                summary = f"{arrow} {update_status.message}"
+            update_str = (
+                f" — [b yellow]{summary}[/b yellow] "
+                f"[@click=screen.update][b reverse] Update now [/b reverse][/]"
+            )
         self.query_one("#status-bar", Static).update(
             f"{n} playlist(s) — {cookie_str} — {companion_str} — "
             f"library: [b cyan]{active_lib.name}[/b cyan] [dim]({active_lib.path})[/dim]"
