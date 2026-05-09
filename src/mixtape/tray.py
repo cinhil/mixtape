@@ -45,6 +45,43 @@ def _pid_file_path() -> Path:
     return STATE_DIR / "tray.pid"
 
 
+def _tui_pid_file_path() -> Path:
+    from .config import STATE_DIR
+    return STATE_DIR / "tui.pid"
+
+
+def tui_is_running() -> bool:
+    """Is a mixtape TUI live? Checked by the tray to know when to step
+    out of the way for auto-sync (the user is interactively in charge)."""
+    p = _tui_pid_file_path()
+    if not p.is_file():
+        return False
+    try:
+        pid = int(p.read_text().strip())
+    except (OSError, ValueError):
+        return False
+    if _pid_alive(pid):
+        return True
+    try:
+        p.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return False
+
+
+def claim_tui_pid_file() -> Path | None:
+    """Write our PID into ``state/tui.pid`` so the tray knows we're up.
+    Returns the path on success (caller is responsible for unlinking on
+    exit), or None if the file system refused us — non-fatal."""
+    p = _tui_pid_file_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(str(os.getpid()))
+        return p
+    except OSError:
+        return None
+
+
 def _pid_alive(pid: int) -> bool:
     """Best-effort cross-platform 'is this PID still alive' check."""
     if pid <= 0:
@@ -363,6 +400,14 @@ class TrayApp:
     def _on_volume_change(self, change) -> None:
         if self.paused:
             return
+        # Step out of the way when the user is in the TUI: they own the
+        # USB plug story there and we'd otherwise race their sync (two
+        # yt-dlp processes writing into the same playlist folder = file
+        # corruption). The user can still pick "Sync all now" from the
+        # tray menu manually if they really want to.
+        if tui_is_running():
+            self._notify("TUI is open — auto-sync handled there.")
+            return
         # Reuse the headless logic for "is this our device → switch + sync".
         from .config import Config
         from .library_marker import find_marker_on_volume
@@ -376,10 +421,9 @@ class TrayApp:
             if not lib or not lib.auto_sync:
                 continue
             self.cfg.set_active_library(lib.name)
-            self._do_sync_all()  # already locked + threaded internally? no —
-            # _do_sync_all here is synchronous but called from watcher thread.
-            # Acceptable: the watcher thread blocks during sync; new plug events
-            # are queued by the OS and re-emitted on next poll.
+            self._do_sync_all()  # synchronous — watcher thread blocks here
+            # until sync finishes; new plug events queued by the OS are
+            # re-emitted on the next poll.
 
     # ── helpers ────────────────────────────────────────────────────────────
 

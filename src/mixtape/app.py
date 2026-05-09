@@ -12,6 +12,7 @@ from .library_marker import find_marker_on_volume
 from .platform_io import VolumeChange, VolumeWatcher, platform_name, reconcile_library_path
 from .screens.playlists import PlaylistsScreen
 from .screens.sync import SyncScreen
+from .tray import claim_tui_pid_file
 from .update_check import UpdateStatus, get_update_status
 
 
@@ -33,6 +34,10 @@ class MixtapeApp(App):
         self.update_status: UpdateStatus | None = None
         self.usb = VolumeWatcher(self._on_volume_change)
         self.platform = platform_name()
+        # Drop a tui.pid marker so a concurrent tray daemon can detect us
+        # and skip auto-sync (avoids two yt-dlp processes writing into the
+        # same playlist folder). Cleaned up in on_unmount.
+        self._tui_pid_path = claim_tui_pid_file()
 
     def on_mount(self) -> None:
         ok, msg = self.bgutil.start()
@@ -49,6 +54,11 @@ class MixtapeApp(App):
     def on_unmount(self) -> None:
         self.usb.stop()
         self.bgutil.stop()
+        if self._tui_pid_path is not None:
+            try:
+                self._tui_pid_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     # --- USB device handling ---
 
