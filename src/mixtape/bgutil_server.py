@@ -26,7 +26,12 @@ SERVER_URL = f"http://127.0.0.1:{DEFAULT_PORT}"
 # where the server is IPv6-only on Windows (IPV6_V6ONLY default).
 PING_URLS = (SERVER_URL, f"http://[::1]:{DEFAULT_PORT}")
 PING_TIMEOUT = 1.0
-START_TIMEOUT = 15.0
+# Cold-start on Windows is dominated by deno resolving the bgutil-server's
+# transitive npm tree (jsdom + parse5 + w3c-xmlserializer + …). Measured at
+# ~17 s on a stock Win11 box; warm starts are sub-second. 60 s leaves
+# comfortable headroom for slower disks / antivirus scanning without
+# delaying the user when the cache is already warm.
+START_TIMEOUT = 60.0
 
 
 def _find_deno() -> str | None:
