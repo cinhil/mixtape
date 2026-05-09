@@ -24,6 +24,12 @@ from textual.widgets import (
 )
 
 from ..client import DaemonClient, DaemonError, DaemonNotRunning
+from .screens.confirm_delete import ConfirmDeleteScreen, DeleteConfirmation
+from .screens.cookies import CookiesScreen
+from .screens.libraries import LibrariesScreen
+from .screens.playlist_form import PlaylistFormResult, PlaylistFormScreen
+from .screens.settings import SettingsScreen
+from .screens.update import UpdateScreen
 
 
 log = logging.getLogger("mixtape.tui")
@@ -52,13 +58,15 @@ class MixtapeTUI(App):
     SUB_TITLE = "daemon-driven"
 
     BINDINGS = [
-        Binding("a", "noop", "Add"),
-        Binding("e", "noop", "Edit"),
-        Binding("d", "noop", "Delete"),
+        Binding("a", "add_playlist", "Add"),
+        Binding("e", "edit_playlist", "Edit"),
+        Binding("d", "delete_playlist", "Delete"),
         Binding("s", "sync_one", "Sync sel."),
         Binding("S", "sync_all", "Sync all"),
-        Binding("c", "refresh_cookies", "Refresh cookies"),
-        Binding("u", "refresh_update", "Update?"),
+        Binding("c", "cookies_form", "Cookies"),
+        Binding("l", "libraries", "Libraries"),
+        Binding("o", "settings", "Settings"),
+        Binding("u", "update_modal", "Update"),
         Binding("r", "refresh_state", "Reload"),
         Binding("ctrl+c", "quit_app", "Quit", show=False, priority=True),
         Binding("q", "quit_app", "Quit", priority=True),
@@ -143,6 +151,9 @@ class MixtapeTUI(App):
 
     @work(thread=False, exclusive=True, group="state")
     async def refresh_state(self) -> None:
+        await self._refresh_state_impl()
+
+    async def _refresh_state_impl(self) -> None:
         try:
             self.state = await self.client.status()
             self.libraries = await self.client.libraries()
@@ -202,9 +213,70 @@ class MixtapeTUI(App):
 
     # ── actions ────────────────────────────────────────────────────────
 
-    def action_noop(self) -> None:
-        # Edit/Add/Delete: not yet ported to the daemon client.
-        self._log("[dim]Add/Edit/Delete via daemon client not yet implemented.[/dim]")
+    @work(thread=False, exclusive=True, group="dialog")
+    async def action_add_playlist(self) -> None:
+        result: PlaylistFormResult | None = await self.push_screen_wait(
+            PlaylistFormScreen(self.client)
+        )
+        if result and result.saved:
+            await self._refresh_state_impl()
+
+    @work(thread=False, exclusive=True, group="dialog")
+    async def action_edit_playlist(self) -> None:
+        idx = self._selected_index()
+        if idx is None or idx >= len(self.playlists):
+            self._log("[yellow]Nothing selected.[/yellow]")
+            return
+        result: PlaylistFormResult | None = await self.push_screen_wait(
+            PlaylistFormScreen(self.client, edit=self.playlists[idx], edit_idx=idx)
+        )
+        if result and result.saved:
+            await self._refresh_state_impl()
+
+    @work(thread=False, exclusive=True, group="dialog")
+    async def action_delete_playlist(self) -> None:
+        idx = self._selected_index()
+        if idx is None or idx >= len(self.playlists):
+            self._log("[yellow]Nothing selected.[/yellow]")
+            return
+        p = self.playlists[idx]
+        confirm: DeleteConfirmation | None = await self.push_screen_wait(
+            ConfirmDeleteScreen(p.get("name", "?"), p.get("relative_path", ""))
+        )
+        if not confirm or not confirm.confirmed:
+            return
+        try:
+            await self.client.delete_playlist(idx, also_files=confirm.delete_files)
+        except DaemonError as e:
+            self._log(f"[red]delete failed: {e}[/red]")
+            return
+        await self._refresh_state_impl()
+
+    @work(thread=False, exclusive=True, group="dialog")
+    async def action_cookies_form(self) -> None:
+        ok: bool | None = await self.push_screen_wait(CookiesScreen(self.client))
+        if ok:
+            self._log("[green]✓ cookies updated[/green]")
+            await self._refresh_state_impl()
+
+    @work(thread=False, exclusive=True, group="dialog")
+    async def action_libraries(self) -> None:
+        changed: bool | None = await self.push_screen_wait(LibrariesScreen(self.client))
+        if changed:
+            await self._refresh_state_impl()
+
+    @work(thread=False, exclusive=True, group="dialog")
+    async def action_settings(self) -> None:
+        changed: bool | None = await self.push_screen_wait(
+            SettingsScreen(self.client, self.libraries)
+        )
+        if changed:
+            await self._refresh_state_impl()
+
+    @work(thread=False, exclusive=True, group="dialog")
+    async def action_update_modal(self) -> None:
+        await self.push_screen_wait(UpdateScreen(self.client))
+        await self._refresh_state_impl()
 
     @work(thread=False, exclusive=True, group="action")
     async def action_sync_one(self) -> None:
@@ -223,10 +295,6 @@ class MixtapeTUI(App):
             await self.client.sync()
         except DaemonError as e:
             self._log(f"[red]sync failed: {e}[/red]")
-
-    @work(thread=False, exclusive=True, group="action")
-    async def action_refresh_cookies(self) -> None:
-        await self.client.refresh_cookies()
 
     @work(thread=False, exclusive=True, group="action")
     async def action_refresh_update(self) -> None:
