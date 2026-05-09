@@ -99,25 +99,41 @@ def run_headless() -> int:
                 log.info("  → not a registered library, ignoring")
                 continue
             log.info("  → registered as library %r", lib.name)
-            # Refresh cookies before syncing — they expire ~monthly
+            cfg.set_active_library(lib.name)
+            if not (lib.auto_sync and cfg.playlists):
+                log.info("  → auto-sync disabled or no playlists — nothing to do")
+                continue
+
+            # Per-playlist cookie gate: which ones we can sync right now.
             invalidate_cookie_cache()
             fresh = get_cookie_status(force=True)
-            if not fresh.ok:
-                log.warning(
-                    "  → cookies %s (%s) — skipping sync. "
-                    "Run on another machine:  ssh <host> 'mixtape --set-cookies' < cookies.txt",
-                    fresh.state, fresh.message,
-                )
-                _set_needs_cookies(f"{fresh.state}: {fresh.message}")
-                continue
-            _clear_needs_cookies()
-            cfg.set_active_library(lib.name)
-            if lib.auto_sync and cfg.playlists:
-                threading.Thread(
-                    target=_run_sync, args=(cfg, lib, sync_lock), daemon=True,
-                ).start()
+            cookie_ok = fresh.ok
+            if cookie_ok:
+                _clear_needs_cookies()
+                targets = list(cfg.playlists)
             else:
-                log.info("  → auto-sync disabled or no playlists — nothing to do")
+                _set_needs_cookies(f"{fresh.state}: {fresh.message}")
+                targets = [p for p in cfg.playlists if not p.requires_cookies]
+                blocked = [p for p in cfg.playlists if p.requires_cookies]
+                if blocked:
+                    log.warning(
+                        "  → cookies %s — skipping %d playlist(s) that require auth: %s",
+                        fresh.state, len(blocked), ", ".join(p.name for p in blocked),
+                    )
+                    log.warning(
+                        "    fix from another machine: ssh <host> 'mixtape --set-cookies' < cookies.txt",
+                    )
+                if not targets:
+                    log.warning("  → no anonymous-mode playlists — nothing to sync")
+                    continue
+                log.info(
+                    "  → syncing %d anonymous-mode playlist(s): %s",
+                    len(targets), ", ".join(p.name for p in targets),
+                )
+
+            threading.Thread(
+                target=_run_sync, args=(cfg, lib, targets, sync_lock), daemon=True,
+            ).start()
 
     watcher = VolumeWatcher(on_change)
     watcher.start()
@@ -140,17 +156,20 @@ def run_headless() -> int:
     return 0
 
 
-def _run_sync(cfg: Config, library: Library, lock: threading.Lock) -> None:
+def _run_sync(cfg: Config, library: Library, targets: list[Playlist], lock: threading.Lock) -> None:
     if not lock.acquire(blocking=False):
         log.info("a sync is already running — queue rejected")
         return
     try:
-        log.info("starting auto-sync of %d playlists → %r (%s)",
-                 len(cfg.playlists), library.name, library.path)
-        for i, pl in enumerate(cfg.playlists):
+        log.info("starting auto-sync of %d playlist(s) → %r (%s)",
+                 len(targets), library.name, library.path)
+        for pl in targets:
             try:
-                _sync_one(pl, library, i)
-                cfg.mark_synced(i, pl.track_count)
+                # Use the playlist's index in the *config* list (so mark_synced
+                # writes to the right slot) — find it back from the object.
+                cfg_idx = next((i for i, p in enumerate(cfg.playlists) if p.url == pl.url), 0)
+                _sync_one(pl, library, cfg_idx)
+                cfg.mark_synced(cfg_idx, pl.track_count)
             except Exception as e:  # noqa: BLE001
                 log.error("playlist %r failed: %s", pl.name, e)
         try:

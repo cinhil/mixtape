@@ -129,7 +129,8 @@ class PlaylistsScreen(Screen):
             last = p.last_sync or "—"
             tracks = str(p.track_count) if p.track_count else "—"
             folder = p.relative_path or _slugify(p.name)
-            table.add_row(str(i + 1), p.name, p.format, last, tracks, folder, key=str(i))
+            fmt_label = p.format if p.requires_cookies else f"{p.format} [dim](public)[/dim]"
+            table.add_row(str(i + 1), p.name, fmt_label, last, tracks, folder, key=str(i))
 
     def _selected_index(self) -> int | None:
         table = self.query_one(DataTable)
@@ -232,21 +233,30 @@ class PlaylistsScreen(Screen):
         self._run_sync(targets)
 
     def _run_sync(self, targets) -> None:
-        # Gate: never download without valid cookies (per user policy: best
-        # quality requires authenticated access).
+        # Per-playlist cookie gate. A playlist with requires_cookies=True is
+        # blocked when cookies are invalid (best-quality guarantee). One with
+        # requires_cookies=False is allowed through (public-tier audio is fine).
         cookie_status = self.app.cookie_status  # type: ignore[attr-defined]
         if not cookie_status.ok:
-            self.notify(
-                f"Sync blocked: {cookie_status.message}. Press 'c' to fix.",
-                severity="error",
-                timeout=8,
-            )
-            return
+            cookie_required = [(i, p) for i, p in targets if p.requires_cookies]
+            anonymous = [(i, p) for i, p in targets if not p.requires_cookies]
+            if cookie_required and not anonymous:
+                self.notify(
+                    f"Sync blocked: {cookie_status.message}. Press 'c' to fix, "
+                    f"or uncheck 'Cookies required' on a playlist for public-quality sync.",
+                    severity="error", timeout=10,
+                )
+                return
+            if cookie_required:
+                self.notify(
+                    f"{len(cookie_required)} cookie-required playlist(s) skipped — "
+                    f"syncing the {len(anonymous)} anonymous-mode one(s) only.",
+                    severity="warning", timeout=8,
+                )
+            targets = anonymous
 
         def cb(_):
             self._refresh_table()
-            # Re-check cookies after a sync — they may have been refreshed (or
-            # invalidated server-side) during long-running downloads.
             try:
                 self.app.recheck_cookies()  # type: ignore[attr-defined]
             except AttributeError:

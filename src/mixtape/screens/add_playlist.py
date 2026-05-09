@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Input, Label, LoadingIndicator, Select, Static
+from textual.widgets import Button, Checkbox, Footer, Input, Label, LoadingIndicator, Select, Static
 
 from ..config import Config, Playlist, _slugify
 from ..downloader import PlaylistMeta, fetch_playlist_meta
@@ -86,6 +86,12 @@ class AddPlaylistScreen(ModalScreen[Playlist | None]):
                     id="relative_path",
                     placeholder="(auto: nom slugifié, sous le dossier de la library active)",
                 )
+            with Horizontal(classes="row"):
+                yield Checkbox(
+                    "Cookies requis (qualité haute garantie — décocher pour les playlists publiques)",
+                    value=True,
+                    id="requires_cookies",
+                )
             with Horizontal(id="buttons"):
                 yield Button("Save (Ctrl+S)", id="save", variant="success")
                 yield Button("Cancel (Esc)", id="cancel")
@@ -140,6 +146,7 @@ class AddPlaylistScreen(ModalScreen[Playlist | None]):
         fmt = self.query_one("#format", Select).value
         quality = self.query_one("#quality", Select).value
         relative_path = self.query_one("#relative_path", Input).value.strip()
+        requires_cookies = self.query_one("#requires_cookies", Checkbox).value
         if not url or not name:
             self.app.notify("URL and name are required.", severity="error")
             return
@@ -148,7 +155,8 @@ class AddPlaylistScreen(ModalScreen[Playlist | None]):
             return
         playlist = Playlist(
             name=name, url=url, format=str(fmt), quality=str(quality),
-            relative_path=relative_path,  # empty → derived from name on each call
+            relative_path=relative_path,
+            requires_cookies=bool(requires_cookies),
         )
         self.dismiss(playlist)
 

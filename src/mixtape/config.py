@@ -87,6 +87,11 @@ class Playlist:
     relative_path: str = ""  # subdir under library root; defaults to slug(name)
     last_sync: str | None = None
     track_count: int = 0
+    # When True (default), syncs are blocked unless cookies are valid (=
+    # higher-tier audio guaranteed). Set False for casual / public-only
+    # playlists where you accept the public ~135 kbps tier and want to sync
+    # even if cookies expired.
+    requires_cookies: bool = True
 
     def expanded_dir_for(self, library: Library) -> Path:
         rel = self.relative_path or _slugify(self.name)
