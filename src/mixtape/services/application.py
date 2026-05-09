@@ -16,6 +16,7 @@ from .events import EventBus
 from .library_service import LibraryService
 from .sync_service import SyncService
 from .update_service import UpdateService
+from .volume_service import VolumeService
 from .watcher_service import WatcherService
 
 
@@ -31,6 +32,7 @@ class Application:
         self.cookies = CookieService(self.bus)
         self.updates = UpdateService(self.bus)
         self.sync = SyncService(self.bus, self.library)
+        self.volumes = VolumeService()
         self._started_at: float | None = None
 
     async def start(self) -> None:

@@ -64,3 +64,61 @@ class UpdateApplyResult(BaseModel):
 
 class SimpleOk(BaseModel):
     ok: bool = True
+
+
+class SetCookiesRequest(BaseModel):
+    content: str  # raw Netscape cookies.txt content
+
+
+class CookieStatusOut(BaseModel):
+    state: str
+    message: str
+    ok: bool = False
+
+
+class AddLibraryRequest(BaseModel):
+    name: str
+    path: str
+    volume_name: str = ""
+    auto_sync: bool = False
+    uuid: str = ""
+    create_marker: bool = False  # write a .mixtape marker into ``path``
+
+
+class RegisterVolumeRequest(BaseModel):
+    mount_path: str
+    fallback_name: str | None = None
+
+
+class RegisterVolumeResult(BaseModel):
+    name: str
+    path: str
+    uuid: str
+    created: bool
+
+
+class AddPlaylistRequest(BaseModel):
+    url: str
+    name: str | None = None
+    format: str | None = None
+    quality: str | None = None
+    requires_cookies: bool = True
+
+
+class UpdatePlaylistRequest(BaseModel):
+    name: str | None = None
+    url: str | None = None
+    format: str | None = None
+    quality: str | None = None
+    requires_cookies: bool | None = None
+
+
+class VolumeOut(BaseModel):
+    identifier: str
+    label: str
+    mount_path: str
+    fs_type: str
+    size_bytes: int
+    free_bytes: int
+    is_removable: bool
+    marker: dict[str, Any] | None = None

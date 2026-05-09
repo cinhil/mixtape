@@ -127,6 +127,53 @@ class DaemonClient:
     async def refresh_cookies(self) -> None:
         await self._json("POST", "/cookies/refresh")
 
+    async def set_cookies(self, content: str) -> dict[str, Any]:
+        return await self._json("POST", "/cookies", json={"content": content})
+
+    async def list_volumes(self) -> list[dict[str, Any]]:
+        return await self._json("GET", "/volumes")
+
+    async def add_library(self, name: str, path: str, *,
+                          volume_name: str = "", auto_sync: bool = False,
+                          uuid: str = "", create_marker: bool = False) -> None:
+        await self._json("POST", "/libraries", json={
+            "name": name, "path": path,
+            "volume_name": volume_name, "auto_sync": auto_sync,
+            "uuid": uuid, "create_marker": create_marker,
+        })
+
+    async def remove_library(self, name: str) -> None:
+        await self._json("DELETE", f"/libraries/{name}")
+
+    async def register_volume(self, mount_path: str, fallback_name: str | None = None) -> dict[str, Any]:
+        return await self._json("POST", "/libraries/register-volume", json={
+            "mount_path": mount_path, "fallback_name": fallback_name,
+        })
+
+    async def add_playlist(self, url: str, *,
+                           name: str | None = None,
+                           fmt: str | None = None,
+                           quality: str | None = None,
+                           requires_cookies: bool = True) -> dict[str, Any]:
+        return await self._json("POST", "/playlists", json={
+            "url": url, "name": name, "format": fmt, "quality": quality,
+            "requires_cookies": requires_cookies,
+        })
+
+    async def update_playlist(self, idx: int, *,
+                              name: str | None = None,
+                              url: str | None = None,
+                              fmt: str | None = None,
+                              quality: str | None = None,
+                              requires_cookies: bool | None = None) -> dict[str, Any]:
+        return await self._json("PUT", f"/playlists/{idx}", json={
+            "name": name, "url": url, "format": fmt, "quality": quality,
+            "requires_cookies": requires_cookies,
+        })
+
+    async def delete_playlist(self, idx: int, also_files: bool = False) -> None:
+        await self._json("DELETE", f"/playlists/{idx}", params={"also_files": str(also_files).lower()})
+
     async def refresh_update(self) -> None:
         await self._json("POST", "/update/refresh")
 

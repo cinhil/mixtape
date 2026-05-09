@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from ..config import write_cookies
 from ..cookies_check import CookieStatus, get_cookie_status, invalidate_cache
 from .events import EventBus
 
@@ -38,6 +39,20 @@ class CookieService:
             except (asyncio.CancelledError, Exception):
                 pass
             self._task = None
+
+    async def write(self, content: str) -> CookieStatus:
+        """Replace the cookies file with ``content`` (Netscape format) and
+        re-validate immediately. Used by the TUI cookie-paste form and
+        the desktop UI's settings dialog."""
+        if not content.strip():
+            raise ValueError("empty cookies content")
+        if "youtube" not in content.lower() and not content.lstrip().startswith("# Netscape"):
+            raise ValueError("doesn't look like a YouTube cookies.txt — refusing to overwrite")
+        normalised = content if content.endswith("\n") else content + "\n"
+        await asyncio.to_thread(write_cookies, normalised)
+        # Immediately re-validate so the caller knows whether the cookies
+        # are accepted by YouTube.
+        return await self.refresh(force=True)
 
     async def refresh(self, *, force: bool = False) -> CookieStatus:
         if force:
