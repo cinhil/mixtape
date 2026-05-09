@@ -268,6 +268,22 @@ PATH automatically. If you're calling `deno` directly outside the launcher:
 $env:Path = "$env:USERPROFILE\.deno\bin;$env:Path"
 ```
 
+### Ctrl+C quits the TUI instead of copying
+
+That's by design: in any Python/Textual TUI, `Ctrl+C` is the universal
+*interrupt* signal, not a copy shortcut. Use the standard Windows Terminal
+copy/paste shortcuts instead:
+
+- **Copy:** `Ctrl+Shift+C` (after selecting text)
+- **Paste:** `Ctrl+Shift+V` or right-click
+- **Select with the mouse inside a Textual area:** hold **Shift** while
+  dragging — this bypasses Textual's mouse capture and lets Windows
+  Terminal select natively.
+
+For copying the sync log: in the sync screen, press **`y`** — that copies
+the current sync's log to the clipboard directly (no manual selection
+needed, emojis preserved via UTF-16 LE encoding).
+
 ### Cookies stop working after a few weeks
 
 YouTube rotates the `LOGIN_INFO` cookie about every 30 days. Re-export from
