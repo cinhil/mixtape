@@ -13,6 +13,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Label, ProgressBar, RichLog, Static
 
+from ..beep import beep
 from ..config import Config, Playlist
 from ..downloader import ProgressEvent, sync_playlist
 from ..platform_io import flush_filesystem
@@ -96,6 +97,9 @@ class SyncScreen(ModalScreen[bool]):
 
     @work(thread=True, exclusive=True)
     def _run_all(self) -> None:
+        # Single beep marks the start of a sync run (motherboard PC speaker
+        # if available, terminal BEL otherwise — see beep.py).
+        beep(1)
         library = self.config.active_library_obj()
         for ui_idx, (_cfg_idx, pl) in enumerate(self.targets):
             if self._cancel.is_set():
@@ -215,6 +219,9 @@ class SyncScreen(ModalScreen[bool]):
             self._log("[b yellow]Sync interrupted by user.[/b yellow]")
             self.app.notify("Sync cancelled.", severity="warning")
         else:
+            # Double beep on successful completion — counterpart to the
+            # single beep emitted at the start of _run_all.
+            beep(2)
             self._log("[b green]All sync tasks complete.[/b green]")
             # If syncing to a removable library, advertise safe-unplug since
             # we already flushed the filesystem before this hook fired.

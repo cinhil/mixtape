@@ -292,6 +292,8 @@ class TrayApp:
             self._notify("A sync is already running.")
             return
         try:
+            from .beep import beep
+            beep(1)  # single beep: sync starting
             self._set_state("syncing")
             self._notify("Sync started…")
             from .config import Config
@@ -309,6 +311,7 @@ class TrayApp:
                 flush_filesystem()
             except Exception:
                 pass
+            beep(2)  # double beep: sync finished — safe to unplug
             self._set_state("idle")
             self._notify(f"Sync done — '{lib.name}' is safe to unplug.")
         finally:

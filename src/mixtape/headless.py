@@ -163,6 +163,8 @@ def _run_sync(cfg: Config, library: Library, targets: list[Playlist], lock: thre
         log.info("a sync is already running — queue rejected")
         return
     try:
+        from .beep import beep
+        beep(1)  # single beep: sync starting
         log.info("starting auto-sync of %d playlist(s) → %r (%s)",
                  len(targets), library.name, library.path)
         for idx, pl in enumerate(targets):
@@ -175,6 +177,7 @@ def _run_sync(cfg: Config, library: Library, targets: list[Playlist], lock: thre
             flush_filesystem()
         except Exception:
             pass
+        beep(2)  # double beep: sync finished — safe to unplug
         log.info("✓ auto-sync done — %r is safe to unplug", library.name)
     finally:
         lock.release()
